@@ -718,6 +718,14 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 
 **Done when:** an Assamese question about taxi fares returns the right range with a source chip.
 
+**What was built (Phase 24)**
+- `/assistant` (new chat, optional `?investigation=&q=&lang=` handoff from a verdict) and `/assistant/[id]`; a layout keeps the conversation list on the left. History lives in our own `ChatThread` / `ChatMessage` tables (Stream is not used for the assistant, so the "Powered by Stream chat" label in the mockup is left out).
+- `POST /api/chat`: AI SDK `streamText` with the read-only agent tools (directory, community reports, knowledge, price) plus `startInvestigation`. The browser sends only the newest message; the server keeps the history. Each reply is saved with its parts, source chips, model, prompt version and tokens; tool calls are logged against it.
+- Source chips come from what the tools registered in the evidence ledger; the model never sees or writes a link. Tool chips and the "Running investigation" card (polls the run, then offers the result) are drawn from the saved message parts, so they survive a reload.
+- Language chips (Auto, English, Hindi, Assamese) set the reply language per thread. Weaker languages are not translated through Sarvam yet (Phase 25/26).
+- Limits: 40 messages per person per hour, one `startInvestigation` per turn, the plan's investigation limit still applies. A result id is only attached to a chat if the person owns it.
+- Voice input uses the browser's speech recognition where it exists (hidden otherwise); Sarvam speech arrives in Phase 26. "Listen" (read aloud) is Phase 25.
+
 ---
 
 ## Phase 25 — Sarvam read-aloud

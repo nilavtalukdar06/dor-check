@@ -1,5 +1,5 @@
-import { PageSkeleton } from "@/components/shell/loading";
+import { ChatSkeleton } from "@/components/assistant/chat-skeleton";
 
 export default function Loading() {
-  return <PageSkeleton variant="split" label="Loading your conversations…" />;
+  return <ChatSkeleton />;
 }

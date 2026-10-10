@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronUpIcon, FilterIcon, InfoIcon, SearchIcon } from "lucide-react";
+import { ChevronUpIcon, FilterIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoadingState } from "@/components/shell/loading";
 import { Badge } from "@/components/ui/badge";
@@ -58,7 +58,7 @@ function useDebounced<T>(value: T, ms: number) {
  * Explore screen: the map on the left, filters and a "Nearby signals" list on the right
  * (a bottom sheet on phones). Panning or filtering reloads the pins and the list together.
  */
-export function MapExplorer({ demoNote }: { demoNote: string | null }) {
+export function MapExplorer() {
   const mapRef = useRef<ExploreMapHandle>(null);
   const [layers, setLayers] = useState<MapLayer[]>([...MAP_LAYERS]);
   const [state, setState] = useState<State | null>(null);
@@ -190,15 +190,6 @@ export function MapExplorer({ demoNote }: { demoNote: string | null }) {
           </ul>
         )}
       </div>
-      {demoNote ? (
-        <div className="m-4 mt-3 flex items-start gap-2.5 rounded-xl border border-info-border bg-info-soft px-3.5 py-3 text-info">
-          <InfoIcon className="mt-0.5 size-4 shrink-0" />
-          <div className="flex flex-col gap-0.5 text-xs">
-            <span className="font-semibold">Demo data</span>
-            <span className="text-foreground">{demoNote}</span>
-          </div>
-        </div>
-      ) : null}
     </>
   );
 

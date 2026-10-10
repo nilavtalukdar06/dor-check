@@ -2,12 +2,15 @@ import { CheckCircle2Icon, EyeOffIcon, ImageIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
+import { Discussion } from "@/components/reports/discussion";
+import { FindingForm, WithdrawFinding } from "@/components/reports/finding-controls";
 import { FollowButton } from "@/components/reports/follow-button";
 import { ReportStatusBadge } from "@/components/reports/report-status";
 import { LoadingState } from "@/components/shell/loading";
 import { Skeleton } from "@/components/ui/skeleton";
 import { rs } from "@/lib/format";
 import { CATEGORY_LABEL, KIND_LABEL, type REPORT_CATEGORIES, type REPORT_KINDS } from "@/lib/reports";
+import { findViewableReport, listComments } from "@/server/comments";
 import { getReportDetail, reasonLabel } from "@/server/reports-view";
 import { getRole } from "@/server/roles";
 import { getCurrentUser } from "@/server/users";
@@ -19,12 +22,22 @@ export async function generateMetadata({ params }: Pick<PageProps<"/reports/[ref
 const date = (d: Date) => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" }).format(d);
 const stamp = (d: Date) => new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" }).format(d);
 
+/** The comment list is loaded on its own so the report shows first. */
+async function DiscussionSection({ reference, viewer }: { reference: string; viewer: { id: string; role: "TRAVELLER" | "MODERATOR" | "ADMIN"; name: string | null; displayName: string | null } }) {
+  const report = await findViewableReport(viewer, reference);
+  if (!report) return null;
+  const initial = await listComments(viewer, report);
+  return <Discussion reference={reference} initial={initial} staff={viewer.role !== "TRAVELLER"} closed={report.status === "REJECTED" || report.status === "CLOSED"} />;
+}
+
 async function Report({ params }: Pick<PageProps<"/reports/[ref]">, "params">) {
   const { ref } = await params;
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
-  const r = await getReportDetail({ id: user.id, role: (await getRole()) ?? "TRAVELLER" }, ref.toUpperCase());
+  const role = (await getRole()) ?? "TRAVELLER";
+  const r = await getReportDetail({ id: user.id, role }, ref.toUpperCase());
   if (!r) notFound();
+  const staff = role !== "TRAVELLER";
 
   return (
     <div className="flex flex-col gap-6" data-testid="report-page" data-status={r.status}>
@@ -73,9 +86,18 @@ async function Report({ params }: Pick<PageProps<"/reports/[ref]">, "params">) {
                 <span className="inline-flex items-center gap-1 rounded-full border border-ok-border bg-card px-2.5 py-0.5 text-xs text-ok"><CheckCircle2Icon className="size-3" aria-hidden />Moderator</span>
               </div>
               <p className="text-sm leading-relaxed whitespace-pre-line">{f.body}</p>
-              <p className="text-xs text-muted-foreground">Reviewed {date(f.publishedAt)} by the moderation team</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">Reviewed {date(f.publishedAt)} by the moderation team</p>
+                {staff ? <WithdrawFinding id={f.id} /> : null}
+              </div>
             </section>
           ))}
+
+          {staff ? <FindingForm reference={r.reference} /> : null}
+
+          <Suspense fallback={<Skeleton className="h-64 rounded-xl" />}>
+            <DiscussionSection reference={r.reference} viewer={{ id: user.id, role, name: user.name, displayName: user.displayName }} />
+          </Suspense>
 
           {r.similar.length ? (
             <section aria-label="Similar reports" className="overflow-hidden rounded-xl border bg-card shadow-xs">

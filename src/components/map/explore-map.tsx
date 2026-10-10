@@ -74,15 +74,18 @@ export default function ExploreMap({
       style: "mapbox://styles/mapbox/standard",
       bounds: NE_BOUNDS,
       fitBoundsOptions: { padding: 24 },
-      // Flat enough that the whole region is framed; it tilts when you zoom to a pin or a search.
-      pitch: 20,
-      bearing: 0,
+      // Tilted by default so terrain and 3D objects show, like the Mapbox homepage.
+      pitch: 60,
+      bearing: -17,
       attributionControl: true,
     });
     map.current = m;
     m.on("style.load", () => {
       m.addSource("mapbox-dem", { type: "raster-dem", url: "mapbox://mapbox.mapbox-terrain-dem-v1", tileSize: 512, maxzoom: 14 });
       m.setTerrain({ source: "mapbox-dem", exaggeration: 1.4 });
+      // 3D buildings, landmarks, trees and a soft daylight look from the Standard style.
+      m.setConfigProperty("basemap", "show3dObjects", true);
+      m.setConfigProperty("basemap", "lightPreset", "day");
       setReady(true);
     });
     m.on("movestart", (e) => {
@@ -95,7 +98,7 @@ export default function ExploreMap({
     // region if nobody has moved the map yet.
     const observer = new ResizeObserver(() => {
       m.resize();
-      if (!userMoved.current) m.fitBounds(NE_BOUNDS, { padding: 24, animate: false, pitch: 20, bearing: 0 });
+      if (!userMoved.current) m.fitBounds(NE_BOUNDS, { padding: 24, animate: false, pitch: 60, bearing: -17 });
     });
     observer.observe(container.current);
     m.once("load", emitView);
@@ -170,10 +173,10 @@ export default function ExploreMap({
       const m = map.current;
       if (!m || points.length === 0) return;
       const b = points.reduce((bb, p) => bb.extend([p.lng, p.lat]), new mapboxgl.LngLatBounds([points[0].lng, points[0].lat], [points[0].lng, points[0].lat]));
-      m.fitBounds(b, { padding: 80, maxZoom: 12, pitch: 50, duration: 900 });
+      m.fitBounds(b, { padding: 80, maxZoom: 14, pitch: 62, duration: 1200 });
     },
     focus(s) {
-      map.current?.flyTo({ center: [s.lng, s.lat], zoom: Math.max(map.current.getZoom(), 10.5), pitch: 55, duration: 900 });
+      map.current?.flyTo({ center: [s.lng, s.lat], zoom: Math.max(map.current.getZoom(), 15), pitch: 62, bearing: -17, duration: 1500 });
     },
   }));
 
