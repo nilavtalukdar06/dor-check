@@ -724,6 +724,8 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 - Source chips come from what the tools registered in the evidence ledger; the model never sees or writes a link. Tool chips and the "Running investigation" card (polls the run, then offers the result) are drawn from the saved message parts, so they survive a reload.
 - Language chips (Auto, English, Hindi, Assamese) set the reply language per thread. Weaker languages are not translated through Sarvam yet (Phase 25/26).
 - Limits: 40 messages per person per hour, one `startInvestigation` per turn, the plan's investigation limit still applies. A result id is only attached to a chat if the person owns it.
+- **Web and browser tools:** `searchWeb` and `scrapePage` (Firecrawl) give live web search. `browseSite` opens one public page in the secure Browserbase browser through the existing capture workflow (read-only: navigate, screenshot, read; never type, click, log in or pay). The chat embeds the live view while it works, then shows the screenshot and the prices the page showed; the screenshot and page facts go to the evidence vault. At most 2 pages and 3 searches per message. The model gets the prices and an advance-payment flag, never the page's phone numbers or payment ids.
+- Page reading now uses `GEMINI_CAPTURE_MODEL` (default `google/gemini-3.1-flash-lite-preview`): the full 3.5-flash ran out of free-tier quota and silently stopped reading pages.
 - Voice input uses the browser's speech recognition where it exists (hidden otherwise); Sarvam speech arrives in Phase 26. "Listen" (read aloud) is Phase 25.
 
 ---

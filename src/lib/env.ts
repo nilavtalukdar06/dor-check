@@ -18,6 +18,8 @@ export const env = createEnv({
     GEMINI_MODEL: optional,
     /** Gemini model for the investigation agent (tool use and the verdict); defaults in server/ai.ts. */
     GEMINI_AGENT_MODEL: optional,
+    /** The model Stagehand uses to read a captured page, as "google/<name>". Must be one Stagehand knows. */
+    GEMINI_CAPTURE_MODEL: optional,
     FIRECRAWL_API_KEY: optional,
     BROWSERBASE_API_KEY: optional,
     BROWSERBASE_PROJECT_ID: optional,

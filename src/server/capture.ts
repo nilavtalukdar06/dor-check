@@ -14,7 +14,8 @@ import { putObject, storageConfigured } from "./storage";
 
 const VIEWPORT = { width: 1280, height: 800 };
 const NAVIGATION_TIMEOUT_MS = 20_000;
-const MODEL = "google/gemini-3.5-flash";
+/** Reads the page text. The full gemini-3.5-flash runs out of free-tier quota after a handful of pages, so the lite model is the default; override with GEMINI_CAPTURE_MODEL. */
+const MODEL = env.GEMINI_CAPTURE_MODEL ?? "google/gemini-3.1-flash-lite-preview";
 
 export const captureConfigured = () =>
   Boolean(env.BROWSERBASE_API_KEY && env.BROWSERBASE_PROJECT_ID && env.GOOGLE_GENERATIVE_AI_API_KEY) && storageConfigured();
@@ -89,7 +90,7 @@ export async function capturePage(url: string, owner: CaptureOwner): Promise<Cap
 
     stagehand = await StagehandClass.create({
       browser,
-      model: { modelName: MODEL, apiKey: env.GOOGLE_GENERATIVE_AI_API_KEY! },
+      model: { modelName: MODEL as never, apiKey: env.GOOGLE_GENERATIVE_AI_API_KEY! },
     });
     const [page] = await browser.context.pages();
 

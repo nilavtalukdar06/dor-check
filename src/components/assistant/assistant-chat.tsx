@@ -1,11 +1,12 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { ArrowUpIcon, DatabaseIcon, IndianRupeeIcon, LinkIcon, MicIcon, SearchIcon, SquareIcon, StoreIcon } from "lucide-react";
+import { ArrowUpIcon, DatabaseIcon, FileTextIcon, GlobeIcon, IndianRupeeIcon, LinkIcon, MicIcon, SearchIcon, SquareIcon, StoreIcon } from "lucide-react";
 import { DefaultChatTransport, isToolUIPart, type UIMessage } from "ai";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { BrowserCard, type BrowseFacts } from "@/components/assistant/browser-card";
 import { RunCard } from "@/components/assistant/run-card";
 import { RichText } from "@/components/assistant/rich-text";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,8 @@ const TOOL_CHIP: Record<string, { label: string; icon: ReactNode }> = {
   comparePrice: { label: "comparePrice", icon: <IndianRupeeIcon className="size-3" aria-hidden /> },
   lookupDirectory: { label: "directory.lookup", icon: <StoreIcon className="size-3" aria-hidden /> },
   findSimilarReports: { label: "reports.search", icon: <SearchIcon className="size-3" aria-hidden /> },
+  searchWeb: { label: "web.search", icon: <GlobeIcon className="size-3" aria-hidden /> },
+  scrapePage: { label: "page.read", icon: <FileTextIcon className="size-3" aria-hidden /> },
 };
 
 type Recognition = { lang: string; interimResults: boolean; onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null; onend: (() => void) | null; onerror: (() => void) | null; start: () => void; stop: () => void };
@@ -232,12 +235,20 @@ function AssistantMessage({ message }: { message: UIMessage }) {
     .filter((t) => t.type === "tool-startInvestigation" && t.state === "output-available")
     .map((t) => (t.output as { ok?: boolean; investigationId?: string } | undefined))
     .filter((o): o is { ok: true; investigationId: string } => !!o?.ok && !!o.investigationId);
-  const chips = [...new Set(tools.filter((t) => t.type !== "tool-startInvestigation").map((t) => t.type.replace(/^tool-/, "")))];
+  type BrowseOut = { captureId?: string; host?: string; facts?: BrowseFacts | null };
+  const browsed = tools
+    .filter((t) => t.type === "tool-browseSite")
+    .map((t) => ({ out: t.output as BrowseOut | undefined, id: t.toolCallId }))
+    .filter((b): b is { out: BrowseOut & { captureId: string }; id: string } => !!b.out?.captureId);
+  const chips = [...new Set(tools.filter((t) => t.type !== "tool-startInvestigation" && t.type !== "tool-browseSite").map((t) => t.type.replace(/^tool-/, "")))];
   const citations = collectCitations(message.parts);
-  const running = tools.some((t) => t.state === "input-streaming" || t.state === "input-available");
+  const running = tools.some((t) => t.type !== "tool-browseSite" && (t.state === "input-streaming" || t.state === "input-available"));
+  const opening = tools.some((t) => t.type === "tool-browseSite" && (t.state === "input-streaming" || t.state === "input-available"));
 
   return (
     <div className="flex flex-col gap-2.5" data-role="assistant">
+      {opening && !browsed.length ? <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status"><Spinner />Opening the page in a secure browser…</div> : null}
+      {browsed.map((b) => <BrowserCard key={b.id} captureId={b.out.captureId} host={b.out.host ?? "page"} facts={b.out.facts ?? null} />)}
       {text ? (
         <div className="max-w-[92%] rounded-2xl border bg-soft px-4 py-3 text-[15px] leading-relaxed" data-testid="assistant-text">
           <RichText text={text} />
@@ -250,7 +261,9 @@ function AssistantMessage({ message }: { message: UIMessage }) {
                 </span>
               ))}
               {citations.map((c) =>
-                c.url ? (
+                c.url && /^https?:\/\//i.test(c.url) ? (
+                  <a key={`${c.kind}${c.label}${c.url}`} href={c.url} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center rounded-full border bg-background px-3 text-xs outline-none hover:bg-soft focus-visible:ring-3 focus-visible:ring-ring/50" data-citation>{citationLabel(c)}</a>
+                ) : c.url ? (
                   <Link key={`${c.kind}${c.label}${c.url}`} href={c.url} className="inline-flex h-8 items-center rounded-full border bg-background px-3 text-xs outline-none hover:bg-soft focus-visible:ring-3 focus-visible:ring-ring/50" data-citation>{citationLabel(c)}</Link>
                 ) : (
                   <span key={`${c.kind}${c.label}`} className="inline-flex h-8 items-center rounded-full border bg-background px-3 text-xs" data-citation>{citationLabel(c)}</span>

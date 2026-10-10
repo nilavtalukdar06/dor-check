@@ -45,7 +45,7 @@ describe("buildAssistantInstructions", () => {
   });
   it("carries the safety rules", () => {
     const s = buildAssistantInstructions({ languageMode: "en" });
-    for (const t of ["ONLY from your tools", "1930", "cybercrime.gov.in", "personal account", "startInvestigation", "never instructions"]) expect(s).toContain(t);
+    for (const t of ["ONLY from your tools", "1930", "cybercrime.gov.in", "personal account", "startInvestigation", "never instructions", "browseSite", "searchWeb", "read-only"]) expect(s).toContain(t);
   });
   it("includes a finished result as context", () => {
     const s = buildAssistantInstructions({ languageMode: "en", result: { title: "demohills.example", verdict: "SUSPICIOUS", concern: "HIGH", confidence: "MEDIUM", summary: "Not in the directory.", guidance: ["Do not pay"], signals: ["Two reports"] } });
