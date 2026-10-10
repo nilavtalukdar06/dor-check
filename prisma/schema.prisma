@@ -710,6 +710,9 @@ model WorkflowRun {
   status            RunStatus        @default(QUEUED)
   inngestRunId      String?          @unique
   inngestEventId    String?
+  /// Browserbase session while a Stagehand browser is open; the live view URL is fetched
+  /// on demand from it (it is only valid while the session runs).
+  browserSessionId  String?
   userId            String?
   user              User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   investigationId   String?

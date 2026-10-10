@@ -69,17 +69,23 @@ function NavSection({
   );
 }
 
+/** Moderator links; rendered by a server component that has checked the role. */
+export function ModeratorNav({ counts = {} }: { counts?: Record<string, number> }) {
+  return <NavSection group={moderatorNav} counts={counts} />;
+}
+
 export function AppSidebar({
   user,
   counts = {},
   usage,
-  isModerator,
+  moderatorSlot,
 }: {
   /** Server-rendered, Suspense-wrapped user menu. */
   user: React.ReactNode;
   counts?: Record<string, number>;
   usage: { used: number; limit: number };
-  isModerator: boolean;
+  /** Async slot that renders <ModeratorNav /> only for moderators. */
+  moderatorSlot?: React.ReactNode;
 }) {
   return (
     <Sidebar>
@@ -92,7 +98,7 @@ export function AppSidebar({
       <SidebarContent className="gap-2 py-0">
         <NavSection group={mainNav} counts={counts} />
         <NavSection group={othersNav} counts={counts} />
-        {isModerator ? <NavSection group={moderatorNav} counts={counts} /> : null}
+        {moderatorSlot}
       </SidebarContent>
       <SidebarFooter className="gap-3 p-3">
         <UsageCard used={usage.used} limit={usage.limit} />

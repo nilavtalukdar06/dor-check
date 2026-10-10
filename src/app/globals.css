@@ -7,6 +7,7 @@
 
 @theme inline {
   --color-soft: var(--soft);
+  --color-skeleton: var(--skeleton);
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
   --color-ok-border: var(--ok-border);
@@ -71,6 +72,8 @@
   --popover: #ffffff;
   --popover-foreground: #111111;
   --soft: #f7f7f7;
+  /* Placeholder blocks: visible on both white and soft surfaces. */
+  --skeleton: #d6d6d6;
 
   /* Neutral actions: black primary, soft grey secondary */
   --primary: #151515;
@@ -158,6 +161,7 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
   --soft: oklch(0.24 0 0);
+  --skeleton: oklch(0.38 0 0);
   --ok: #4ade80;
   --ok-soft: rgb(34 197 94 / 0.12);
   --ok-border: rgb(34 197 94 / 0.3);

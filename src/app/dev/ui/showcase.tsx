@@ -8,6 +8,12 @@ import { Waveform } from "@/components/common/waveform";
 import { PriceRange } from "@/components/common/price-range";
 import { EvidenceCard } from "@/components/investigation/evidence-card";
 import { StepTimeline } from "@/components/investigation/step-timeline";
+import {
+  ListSkeleton,
+  LoadingState,
+  StatRowSkeleton,
+  TableSkeleton,
+} from "@/components/shell/loading";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -168,6 +174,15 @@ export function UiShowcase() {
             <Waveform progress={0.4} />
           </CardContent>
         </Card>
+      </Section>
+
+      <Section title="Loading states">
+        <div className="flex flex-col gap-4">
+          <LoadingState text="Loading your investigations…" />
+          <StatRowSkeleton />
+          <TableSkeleton rows={3} />
+          <ListSkeleton rows={2} />
+        </div>
       </Section>
 
       <Section title="Misc">

@@ -1,11 +1,10 @@
 export {};
 
-export type Roles = "admin" | "user";
-
 declare global {
   interface CustomJwtSessionClaims {
-    metadata: {
-      role?: Roles;
+    /** Mirrors Clerk publicMetadata; set via Sessions > Customize session token. */
+    metadata?: {
+      role?: string;
     };
   }
 }

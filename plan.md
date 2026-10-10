@@ -1,6 +1,6 @@
 # Travel Trap Detector — Phase-by-Phase Build Guide (31 phases)
 
-Stack: Next.js + React + Tailwind + shadcn/ui · Clerk · Inngest · Vercel AI SDK · Firecrawl · Browserbase · Pinecone · Stream · Sarvam AI · Postgres + Prisma.
+Stack: Next.js + React + Tailwind + shadcn/ui · Clerk · Inngest · Vercel AI SDK (Gemini) · Firecrawl · Stagehand on Browserbase · Pinecone (hosted `llama-text-embed-v2`) · Stream · Sarvam AI · Cloudflare R2 · Postgres + Prisma.
 UI reference: the sidebar design canvas (28 screens). Schema reference: `schema.prisma`.
 
 How to use this guide: do phases in order. Each phase is 1–3 hours of focused work, ends in something you can click, and has a "Done when" check. Phases marked **[MVP]** are the minimum to demo; the rest are the "missing features" layer. Commit after every phase.
@@ -24,9 +24,9 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 12 | Directory explore screen | Core | 1 h |
 | 13 | Inngest setup | Agent | 1 h |
 | 14 | Firecrawl research | Agent | 2 h |
-| 15 | Browserbase evidence capture | Agent | 3 h |
+| 15 | Stagehand + Browserbase capture and live preview | Agent | 4 h |
 | 16 | Evidence vault | Agent | 2 h |
-| 17 | Embeddings and Pinecone | Agent | 3 h |
+| 17 | Pinecone hosted embeddings | Agent | 3 h |
 | 18 | AI SDK agent and tools | Agent | 3 h |
 | 19 | Investigation workflow end to end | Agent | 3 h |
 | 20 | Investigate form and live run screen | Agent | 3 h |
@@ -40,6 +40,41 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 28 | Settings, usage, billing, notifications | Account | 3 h |
 | 29 | Safety, limits and disclaimers | Quality | 2 h |
 | 30 | Testing, deploy and demo | Ship | 3 h |
+
+## Build status and decisions
+
+| Phase | Status |
+|---|---|
+| 0 Accounts and keys | Done |
+| 1 Scaffold | Done |
+| 2 Design tokens and UI kit | Done (`/dev/ui`) |
+| 3 Sidebar shell | Done |
+| 4 PWA | Done (service worker registers in production builds only) |
+| 5 Database | Done: 54 models, migrations `init` and `live_preview` (adds `WorkflowRun.browserSessionId`) |
+| 6 Clerk auth and user sync | Done: webhook, first-sign-in sync |
+| 7 Roles and protected routes | Done: `requireRole`, moderator-only pages, 403 page |
+| 8 onwards | Open |
+
+Decisions that override the original text below:
+
+- **Model provider:** Google Gemini through the AI SDK (`@ai-sdk/google`, env `GOOGLE_GENERATIVE_AI_API_KEY`). No OpenAI or Anthropic key.
+- **Embeddings:** Pinecone hosted inference, model `llama-text-embed-v2` (1024 dimensions). No separate embedding provider and no embedding calls from our code. The index is an *integrated* index (`createIndexForModel`), so we send text and Pinecone embeds it.
+- **Browser automation:** Stagehand v3 on Browserbase, not raw Playwright. Stagehand drives the page; Browserbase hosts the session and provides the **live view**.
+- **Live browser preview: doable.** Browserbase exposes a live view URL per session (`sessions.debug(sessionId).debuggerFullscreenUrl`) that can be embedded in an iframe, read-only. See Phases 15, 19 and 20.
+- **File storage:** Cloudflare R2 through the S3 API (`R2_BUCKET`, `R2_PUBLIC_URL`, `S3_ACCESS_KEY_ID`, `S3_ACCESS_KEY_SECRET`), not R2.
+- **Webhook secret name:** `CLERK_WEBHOOK_SIGNING_SECRET`.
+- **Package manager:** npm.
+
+### Loading and empty states (applies to every phase from 7 on)
+
+Every route that reads data ships with a loading state. No blank screens, no bare spinners.
+
+1. Each `(app)` route segment gets a `loading.tsx` that renders a skeleton with the same layout as the page (header, cards, table rows) and a short caption that says what is loading, for example "Loading your investigations…".
+2. Data that streams inside a page sits in its own `<Suspense fallback={...}>` with a skeleton of that block, so the rest of the page is usable.
+3. Actions show progress in the button: spinner plus a verb ("Starting investigation…", "Generating speech…", "Submitting report…") and the button is disabled.
+4. Long jobs (agent run, crawl, transcription) show the step name and the live timeline, never just a spinner.
+5. Empty results use the shared empty-state component with a reason and a next action ("No reports yet. Submit the first one.").
+6. Shared pieces live in `components/shell`: `LoadingState` (spinner plus text), `PageSkeleton`, `CardSkeleton`, `TableSkeleton`, `ListSkeleton`.
 
 ---
 
@@ -58,15 +93,15 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | Service | Where | What you copy | Env vars |
 |---|---|---|---|
 | Postgres | neon.tech (or supabase.com) | connection string | `DATABASE_URL` |
-| Clerk | dashboard.clerk.com → create app → API keys | publishable + secret key; later a webhook signing secret | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SECRET` |
+| Clerk | dashboard.clerk.com → create app → API keys | publishable + secret key; webhook signing secret | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SIGNING_SECRET` |
 | Inngest | app.inngest.com → create app → Manage → Event Keys / Signing Key (not needed locally) | event key, signing key | `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` |
-| LLM for AI SDK | console.anthropic.com or platform.openai.com or aistudio.google.com | one API key | `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) |
+| LLM for AI SDK | aistudio.google.com | Gemini API key | `GOOGLE_GENERATIVE_AI_API_KEY` |
 | Firecrawl | firecrawl.dev → dashboard | API key | `FIRECRAWL_API_KEY` |
 | Browserbase | browserbase.com → Settings | API key + project ID | `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` |
-| Pinecone | app.pinecone.io → API keys | API key | `PINECONE_API_KEY` |
+| Pinecone | app.pinecone.io → API keys; create an integrated index with `llama-text-embed-v2` | API key, index name | `PINECONE_API_KEY`, `PINECONE_INDEX` |
 | Stream | getstream.io → Chat → app dashboard | API key + secret | `NEXT_PUBLIC_STREAM_KEY`, `STREAM_SECRET` |
 | Sarvam AI | dashboard.sarvam.ai | API subscription key | `SARVAM_API_KEY` |
-| File storage | Vercel Blob (in Vercel project → Storage) or Cloudflare R2 | token | `BLOB_READ_WRITE_TOKEN` |
+| File storage | Cloudflare R2 (S3 API) | bucket, public URL, S3 access key and secret, account id | `R2_BUCKET`, `R2_PUBLIC_URL`, `S3_ACCESS_KEY_ID`, `S3_ACCESS_KEY_SECRET`, `R2_ACCOUNT_ID` |
 | Maps (optional) | none for Leaflet + OpenStreetMap; openrouteservice.org for routing | free key | `ORS_API_KEY` |
 
 **How to proceed**
@@ -353,25 +388,29 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 
 ---
 
-## Phase 15 — Browserbase evidence capture
+## Phase 15 — Browserbase evidence capture with Stagehand and live preview
 
-**Goal:** a timestamped screenshot of the page being checked.
+**Goal:** a timestamped screenshot of the page being checked, captured by a Stagehand-driven Browserbase session, with a live view the traveller can watch while it runs.
 
-**Deliverables:** `server/capture.ts` that opens a remote browser, loads the URL, saves a PNG, returns metadata.
+**Deliverables:** `server/capture.ts` that opens a Browserbase session through Stagehand, loads the URL, saves a PNG, returns metadata, and exposes the live view URL; `/api/investigations/[id]/live` that returns a fresh live view URL for a running session.
 
-**Tech:** `@browserbasehq/sdk` + `playwright-core`; Vercel Blob for storage.
+**Tech:** `@browserbasehq/stagehand` (v3), `@browserbasehq/sdk` (for `sessions.debug`), Cloudflare R2 via the S3 API (`@aws-sdk/client-s3`).
 
-**Keys:** `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BLOB_READ_WRITE_TOKEN`.
+**Keys:** `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `GOOGLE_GENERATIVE_AI_API_KEY` (Stagehand's model, `google/gemini-...`), R2 variables.
+
+**Live preview: doable.** Browserbase's `sessions.debug(sessionId)` returns `debuggerFullscreenUrl`, an embeddable page that mirrors the remote browser in real time. Embed it as an iframe (`sandbox="allow-same-origin allow-scripts"`, `pointer-events: none` so it is read-only). The session emits a `browserbase-disconnected` message when it ends, which the UI uses to swap the iframe for the final screenshot. Each tab has its own URL; we only use the first page.
 
 **How to build**
-1. Create a session: `bb.sessions.create({ projectId })`.
-2. `chromium.connectOverCDP(session.connectUrl)`; `page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 })`.
-3. Screenshot the viewport at 1280×800 (and optionally a payment-step page if the URL path suggests it); never type into forms or submit anything.
-4. Upload to Blob; insert `Evidence` row with `url`, `capturedAt`, `browserSessionId`, `width`, `height`.
-5. Close the session in a `finally` block to avoid billing for idle sessions.
-6. Block navigation to non-http(s) schemes and to private IP ranges to avoid SSRF.
+1. `new Stagehand({ env: "BROWSERBASE", model: "google/<gemini model>", browserbaseSessionCreateParams: { projectId, browserSettings: { viewport: { width: 1280, height: 800 } } } })`, then `await stagehand.init()`. Verify the option names against the installed Stagehand types (Appendix D).
+2. Right after `init()`, read the session id, store it on `WorkflowRun.browserSessionId`, and write a `RunEvent` of type `browser_session_started`. The live screen can now ask for the live view URL.
+3. Navigate deterministically with `page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 })`. Use `stagehand.observe()` / `stagehand.extract()` only to read (listing text, price, payment instructions), never `act()` on forms.
+4. **Read-only by policy.** The agent never types into inputs, submits forms or clicks pay/confirm buttons. Allowed actions: scroll, open a link on the same site, switch tabs. Enforce this in the Stagehand instructions and by only exposing read tools. Block non-http(s) schemes and private IP ranges before `goto` (Phase 29 helper).
+5. Emit a `RunEvent` for each action (`page_navigated`, `page_scrolled`, `page_read`, `page_captured`) with a one-line message, so the timeline shows what the agent is doing next to the live view.
+6. Screenshot the viewport at 1280×800 (optionally the payment-step page when the URL path suggests it), upload to R2, insert an `Evidence` row with `url`, `capturedAt`, `browserSessionId`, `width`, `height`, `capturedBy: "browserbase"`.
+7. Always `await stagehand.close()` in `finally` so idle sessions are not billed. If capture fails, mark the step FAILED and continue with lower confidence.
+8. Live view URLs are tied to the session, so do not store them. `GET /api/investigations/[id]/live` checks that the caller owns the investigation, calls `sessions.debug`, and returns the URL only while the run is RUNNING.
 
-**Done when:** a seeded URL produces a screenshot visible in storage and a row in `Evidence`.
+**Done when:** a seeded URL produces a screenshot in R2 and an `Evidence` row, and while it runs the live view URL shows the remote browser moving.
 
 ---
 
@@ -381,11 +420,11 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 
 **Deliverables:** `/evidence` grid with filters, detail viewer, download, manual upload.
 
-**Tech:** Vercel Blob signed URLs, `react-dropzone`.
+**Tech:** R2 presigned URLs, `react-dropzone`.
 
 **How to build**
 1. Grid cards show thumbnail, title, subject, timestamp and type badge.
-2. Uploads: client upload to Blob with an authenticated token route; limit 8 MB images.
+2. Uploads: client upload to R2 with an authenticated token route; limit 8 MB images.
 3. Detail view shows URL, captured time, linked investigation or report.
 4. "Download all" zips selected files server-side (optional).
 
@@ -393,24 +432,24 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 
 ---
 
-## Phase 17 — Embeddings and Pinecone **[MVP]**
+## Phase 17 — Pinecone with hosted embeddings **[MVP]**
 
-**Goal:** semantic search over tariffs, directory entries, advisories and past reports.
+**Goal:** semantic search over tariffs, directory entries, advisories and past reports, with Pinecone doing the embedding.
 
-**Deliverables:** Pinecone index, ingest function, `retrieve(query, filter)` helper, knowledge sources recorded in the DB.
+**Deliverables:** an integrated Pinecone index, ingest function, `retrieve(query, filter)` helper, knowledge sources recorded in the DB.
 
-**Tech:** `@pinecone-database/pinecone`, embeddings from your LLM provider (for example OpenAI `text-embedding-3-small`) or Pinecone's hosted embedding models.
+**Tech:** `@pinecone-database/pinecone`. Embeddings come from Pinecone's hosted inference model **`llama-text-embed-v2`** (1024 dimensions by default; 2048, 768, 512 and 384 also supported). Our code never calls an embedding API.
 
-**Keys:** `PINECONE_API_KEY` (+ embedding provider key if separate).
+**Keys:** `PINECONE_API_KEY`, `PINECONE_INDEX`.
 
 **How to build**
-1. Create a serverless index in the Pinecone console; the dimension must match the embedding model.
-2. Chunk documents to about 300–500 tokens; keep chunk text in your DB (`VectorRecord.text`) and only vectors in Pinecone.
-3. Metadata per vector: `{ url, title, type, district, retrievedAt, docId }`.
-4. Upsert with a stable id (`{docId}:{chunkIndex}`) so re-syncs overwrite instead of duplicate.
-5. `retrieve()` embeds the query, queries top 5 with a metadata filter (district, type), returns text plus source fields.
-6. Write an Inngest function `source/sync.requested` that crawls with Firecrawl → chunks → embeds → upserts → updates `KnowledgeSource.status`.
-7. Multilingual: embed the English version of user queries (translate first with Sarvam in Phase 26) or use a multilingual embedding model.
+1. Create the index once with `createIndexForModel({ name, cloud: "aws", region: "us-east-1", embed: { model: "llama-text-embed-v2", fieldMap: { text: "chunk_text" } }, waitUntilReady: true })`. The `fieldMap` names the record field Pinecone embeds.
+2. Chunk documents to about 300–500 tokens. Keep the chunk text in `VectorRecord.text` (our DB is the source of truth) and also send it as `chunk_text` so Pinecone can embed it.
+3. Upsert with `index.namespace(ns).upsertRecords([{ _id, chunk_text, url, title, type, district, retrievedAt, docId }])`. The `_id` is `{documentId}:{chunkIndex}`, so re-syncs overwrite instead of duplicating. Note: integrated indexes do not support updating or importing with text, so always re-upsert whole records.
+4. `retrieve()` calls `index.namespace(ns).searchRecords({ query: { topK: 5, inputs: { text }, filter }, fields: [...] })` with a metadata filter (district, type). Optionally add a rerank (`bge-reranker-v2-m3`) for the final top 5. Return text plus source fields from our DB.
+5. Use one namespace per knowledge type (`tariffs`, `directory`, `advisories`, `reports`) so the Knowledge screen can show per-source counts and the assistant can scope searches.
+6. Write an Inngest function `source/sync.requested` that crawls with Firecrawl → chunks → upserts records → updates `KnowledgeSource.status`.
+7. Multilingual: `llama-text-embed-v2` is multilingual, so Assamese and Hindi queries can be sent as-is; still translate to English with Sarvam when recall is poor.
 
 **Done when:** "taxi fare Shillong airport sedan" returns the seeded tariff chunk with its URL.
 
@@ -422,13 +461,13 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 
 **Deliverables:** `server/agent.ts` with tools and a Zod verdict schema; unit test with mocked tools.
 
-**Tech:** Vercel AI SDK (`ai`, provider package), Zod.
+**Tech:** Vercel AI SDK (`ai`, `@ai-sdk/google`), Zod. Model: a Gemini model chosen at build time (check the current id in Appendix D).
 
-**Key:** model provider key.
+**Key:** `GOOGLE_GENERATIVE_AI_API_KEY`.
 
 **How to build**
 1. Define tools with `tool({ description, inputSchema, execute })`:
-   - `searchWeb` (Firecrawl), `scrapePage` (Firecrawl), `capturePage` (Browserbase), `retrieveKnowledge` (Pinecone), `lookupDirectory` (Prisma), `comparePrice` (price engine), `findSimilarReports` (Prisma + Pinecone).
+   - `searchWeb` (Firecrawl), `scrapePage` (Firecrawl), `capturePage` (Stagehand on Browserbase, read-only), `retrieveKnowledge` (Pinecone), `lookupDirectory` (Prisma), `comparePrice` (price engine), `findSimilarReports` (Prisma + Pinecone).
 2. Define the output schema: `verdict`, `concern`, `confidence`, `summary`, `signals[]` (title, detail, strength), `guidance[]`, `sources[]` (url, retrievedAt).
 3. System prompt rules: use only tool results as evidence; cite a source for every claim; say "inconclusive" when evidence is thin; never accuse a named person or business of a crime; verdicts are signals, not legal findings.
 4. Use `generateObject` for the final step; use `streamText` with `maxSteps` / stop condition while gathering evidence.
@@ -454,6 +493,7 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 4. `finalise` writes `InvestigationResult`, `Signal`, `Source`, `ReportMatch`, increments `UsageRecord`, creates a `Notification`.
 5. Add `cancelOn` for `investigation/cancelled`.
 6. Add concurrency limit per user (1–2) to protect third-party quotas.
+7. In `capture-page`, store `browserSessionId` on the `WorkflowRun` as soon as the Stagehand session exists and emit `browser_session_started`; clear nothing at the end (the id stays for the replay link). Emit one `RunEvent` per browser action so the live screen can narrate it.
 
 **Done when:** sending the event from a script produces a complete result and six step rows.
 
@@ -472,6 +512,7 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 2. Server action: validate, check usage limit, create `Investigation` (QUEUED), `inngest.send`, redirect to the run page.
 3. `GET /api/investigations/[id]/events` streams `RunEvent` rows after a `lastId` cursor over SSE (poll the DB every 1 s on the server side). If SSE is hard on your host, poll every 2 s with React Query.
 4. `StepTimeline` renders step state (done / running / waiting / retrying) plus tool chips.
+4a. **Live preview pane (doable).** While the run is RUNNING and has a `browserSessionId`, the right-hand "Live preview" card fetches `/api/investigations/[id]/live` and embeds the returned live view URL in a read-only iframe, with the current page URL and the latest action line under it ("Opening listing page…", "Reading payment instructions…"). Before the session exists it shows a skeleton with the text "Starting a secure browser…". On the `browserbase-disconnected` message, or when the run finishes, it swaps to the final screenshot with "Captured at hh:mm:ss · 1280 x 800". If the live view fails to load it falls back to the screenshot and the timeline; a failed preview never fails the run.
 5. When status is `COMPLETED`, redirect to the verdict.
 
 **Done when:** submitting a link shows steps ticking live and ends on the verdict page.
@@ -566,7 +607,7 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 
 **Deliverables:** `/voice` screen (text area, language and voice selects, waveform player, settings sliders, history), "Read aloud" buttons elsewhere.
 
-**Tech:** Sarvam text-to-speech REST API called from a server route; audio stored in Blob; Web Audio / `wavesurfer.js` for the waveform.
+**Tech:** Sarvam text-to-speech REST API called from a server route; audio stored in R2; Web Audio / `wavesurfer.js` for the waveform.
 
 **Key:** `SARVAM_API_KEY` (dashboard.sarvam.ai). Check Sarvam's docs for the current TTS model name, supported language codes (for example `as-IN`, `hi-IN`, `en-IN`), speaker names and request limits, because they change.
 
@@ -593,7 +634,7 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 
 **How to build**
 1. Record in the browser (`audio/webm`); show timer and live waveform from an `AnalyserNode`.
-2. Upload the clip to Blob, create `VoiceJob (STT)`, send the Inngest event.
+2. Upload the clip to R2, create `VoiceJob (STT)`, send the Inngest event.
 3. Function: convert to a supported format if needed (ffmpeg on a worker if the API rejects webm), call STT with `language_code: "unknown"` for auto-detect, then call translate to English; store `text` and `translated`.
 4. UI polls the job; when done fill the transcript box and keep the audio as a report attachment.
 5. Always let the user edit the transcript before submit; keep both original and translation.
@@ -697,19 +738,23 @@ DATABASE_URL=
 DIRECT_URL=
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
 CLERK_SECRET_KEY=
-CLERK_WEBHOOK_SECRET=
+CLERK_WEBHOOK_SIGNING_SECRET=
 INNGEST_EVENT_KEY=
 INNGEST_SIGNING_KEY=
-ANTHROPIC_API_KEY=            # or OPENAI_API_KEY
+GOOGLE_GENERATIVE_AI_API_KEY=
 FIRECRAWL_API_KEY=
 BROWSERBASE_API_KEY=
 BROWSERBASE_PROJECT_ID=
 PINECONE_API_KEY=
-PINECONE_INDEX=ttd-prod
+PINECONE_INDEX=ttd-prod        # integrated index, llama-text-embed-v2
 NEXT_PUBLIC_STREAM_KEY=
 STREAM_SECRET=
 SARVAM_API_KEY=
-BLOB_READ_WRITE_TOKEN=
+R2_BUCKET=
+R2_PUBLIC_URL=
+R2_ACCOUNT_ID=
+S3_ACCESS_KEY_ID=
+S3_ACCESS_KEY_SECRET=
 ORS_API_KEY=                  # optional
 UPSTASH_REDIS_REST_URL=       # optional
 UPSTASH_REDIS_REST_TOKEN=     # optional
@@ -735,4 +780,4 @@ Keep Phases 0–10, 13–15, 17–21, 22 (without Stream), 25 (read-aloud only),
 
 ## Appendix D — Verify before you build
 
-Service APIs and model names change. Before each integration phase, open the vendor docs and confirm: Sarvam model and language codes, Browserbase connect flow, Firecrawl SDK method names, Pinecone index creation parameters, Stream channel types, Clerk webhook helper, and the AI SDK version-specific helpers (`generateObject`, `streamText`, `useChat`, tool definition shape).
+Service APIs and model names change. Before each integration phase, open the vendor docs and confirm: Sarvam model and language codes, Browserbase connect flow, Firecrawl SDK method names, Pinecone `createIndexForModel`, `upsertRecords` and `searchRecords` signatures, Stagehand v3 constructor options and Browserbase `sessions.debug` live view fields, the current Gemini model id, Stream channel types, Clerk webhook helper, and the AI SDK version-specific helpers (`generateObject`, `streamText`, `useChat`, tool definition shape).
