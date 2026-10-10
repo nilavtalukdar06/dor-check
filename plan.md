@@ -41,6 +41,12 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 29 | Safety, limits and disclaimers | Quality | 2 h |
 | 30 | Testing, deploy and demo | Ship | 3 h |
 
+## From demo data to real data
+
+- **Reports** come from travellers through `/reports/new` (Phase 22, voice in Phase 26). Moderators review them (Phase 27).
+- **Properties, tariff boards and curated tariffs** are added by moderators in Phase 27 (the server actions already exist from Phase 8). Researched price ranges appear on their own and wait for moderator review.
+- **Switching off demo data:** `npm run db:reset` removes every row flagged `isDemo` and reseeds. To launch without demo content, delete the demo rows (the same `resetDemo()` in `prisma/seed/index.ts`), do not reseed, and set the `demo_banner` app setting to `enabled: false`. Reference data (districts, places, plans, help, emergency contacts) is not demo and stays.
+
 ## Build status and decisions
 
 | Phase | Status |
@@ -57,7 +63,8 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 9 Tariff benchmarks and price engine | Done: `lib/price.ts` (40 unit tests), `/api/price`, tested against seeded data |
 | 10 Price check screen | Done, then replaced by Price check v2 (below) |
 | 10b Price check v2 | Done: any place via Mapbox, reverse routes, live web research with cited sources, distance estimate, Mapbox 3D maps |
-| 11 onwards | Open |
+| 11 Explore map | Done: Mapbox 3D map, layers, filters, search, nearby list, mobile bottom sheet; `GET /api/map` |
+| 12 onwards | Open |
 
 Decisions that override the original text below:
 
@@ -571,6 +578,8 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 
 **Tech:** React Hook Form, Zod, Prisma, Inngest `report/submitted`.
 
+**Location:** the form asks for a district and a place. The place box uses the same Mapbox suggestions as the price check (`components/price/place-input.tsx`) and saves `lat`, `lng` and `locationText` on the report. That is what puts a report on the Explore map (`/map` shows public reports that have coordinates). Reports without a place still appear in the list, just not on the map.
+
 **How to build**
 1. Reference generator: `TTD-` + 6 characters from an unambiguous alphabet.
 2. Anonymous-by-default toggle; store `userId` but hide it publicly.
@@ -675,6 +684,7 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 **Deliverables:**
 - `/moderation`: queue table with priority, filters, review drawer (status select, note to reporter, publish official finding), flagged comments tab, directory tab.
 - `/workflows`: run list from Inngest events mirrored in DB, KPIs, event stream.
+- Directory and tariff tabs in `/moderation`: forms for the existing `createPropertyAction` / `updatePropertyAction` / `verifyPropertyAction` / `deletePropertyAction` (Phase 8), a place picker that sets the pin, plus create and edit for tariff boards and curated tariffs, and a review queue for researched tariffs (`reviewStatus: pending`). This is how real properties and tariff boards replace the demo ones.
 - `/knowledge`: sources table, add source, re-sync button, test-a-query box with scores.
 
 **Tech:** shadcn table + sheet, server actions, Inngest REST API or your own `RunEvent` tables, Pinecone query for the test box.

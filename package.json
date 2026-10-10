@@ -17,7 +17,8 @@
     "test:directory": "node --env-file=.env --import tsx scripts/directory-test.ts",
     "test": "vitest run",
     "test:price-live": "node --env-file=.env --import tsx scripts/price-integration.ts",
-    "inngest:dev": "npx --ignore-scripts=false inngest-cli@latest dev -u http://localhost:3000/api/inngest"
+    "inngest:dev": "npx --ignore-scripts=false inngest-cli@latest dev -u http://localhost:3000/api/inngest",
+    "test:map": "node --env-file=.env --import tsx scripts/map-check.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.93",
