@@ -71,7 +71,8 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 16 Evidence vault | Done: `/evidence` grid, filters, URL-driven drawer, upload, download, Download all (zip), delete, and **Capture a page with a realtime live preview** |
 | 17 Pinecone hosted embeddings | Done: integrated index `llama-text-embed-v2`, `retrieve()`, durable `source/sync.requested` workflow, Knowledge screen with Test a query; 81 chunks indexed |
 | 18 AI SDK agent and tools | Done: `runInvestigationAgent` (tools, evidence ledger, rule-checked typed verdict), saved as `InvestigationResult`, every tool call recorded |
-| 19 onwards | Open |
+| 19 Investigation workflow | Done: `run-investigation` Inngest function, six recorded steps, timeline events, results/sources/matches/usage/notification saved, cancel |
+| 20 onwards | Open |
 
 Decisions that override the original text below:
 
@@ -571,6 +572,16 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 5. Add `cancelOn` for `investigation/cancelled`.
 6. Add concurrency limit per user (1–2) to protect third-party quotas.
 7. In `capture-page`, store `browserSessionId` on the `WorkflowRun` as soon as the Stagehand session exists and emit `browser_session_started`; clear nothing at the end (the id stays for the replay link). Emit one `RunEvent` per browser action so the live screen can narrate it.
+
+**Built (differs from the text above):**
+- **Trigger:** `investigation/requested` (`{ investigationId, userId }`); `startInvestigation(user, input)` in `server/investigation.ts` validates, rate limits (20 an hour), creates the investigation, its run and the six `RunStep` rows, and sends it with a de-duplication id. Phase 20's form calls it. **Usage limits are not enforced yet** (Phase 20 step 2); usage is only counted.
+- **The six steps** map onto the Phase 18 agent, split into stages that share a JSON `AgentState` (the evidence ledger, early look-ups, call counts): `parse-input`; `search-sources` (directory and report look-ups, plus a web search when research is on); `capture-page` (Stagehand; skipped when off, no link, or not set up); `retrieve-benchmarks` (tariffs and advisories from the knowledge base); `analyse` (the agent's tool loop, then the verdict and the rules); `finalise`.
+- **Records:** each step has start, end, duration and error; every event is a `RunEvent` under its step (`request_parsed`, `research_started`, `sources_found`, `capture_skipped`/the browser events, `benchmark_calculated`, `analysis_completed`, `verdict_saved`); every tool call is a `ToolCall` against its step.
+- **A capture that fails never fails the run**: the step is FAILED, the timeline says so, the verdict says the page could not be opened and has lower confidence. `WorkflowRun.browserSessionId` is stored as soon as the browser exists and kept after the run.
+- **finalise** saves the result, signals and cited sources, the matched business (`matchedPropertyId`, on an exact directory match), the identifiers (phones and UPI ids stored masked), and `InvestigationReportMatch` rows (same domain, phone or UPI, or similar text). **Then** the last step is marked done, and only then does one transaction add usage (`UsageRecord`, metric `investigations`, month in Indian time), the notification and COMPLETED, so nothing ever sees a completed run with an unfinished step and a retry cannot count a run twice.
+- **Reliability:** 3 retries, a timeout per step, 2 runs at a time per person, `cancelOn` for `investigation/cancelled`; `cancelInvestigation` marks everything cancelled at once. A run that cannot finish is marked FAILED with a notification.
+- Not built here: realtime push of the timeline (Phase 20 reads `RunEvent` over SSE), the form, the verdict page.
+- Checks: 8 more unit tests (steps, titles, usage month, descriptions, masking); `npm run test:investigation` runs the real workflow (needs `npm run dev` and `npm run inngest:dev`).
 
 **Done when:** sending the event from a script produces a complete result and six step rows.
 

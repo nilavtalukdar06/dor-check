@@ -1,5 +1,5 @@
 import { generateText, isStepCount, Output, ToolLoopAgent, type LanguageModel } from "ai";
-import { EvidenceLedger, type LedgerSource } from "@/lib/evidence-ledger";
+import { EvidenceLedger, type LedgerSnapshot, type LedgerSource } from "@/lib/evidence-ledger";
 import { extractIdentifiers } from "@/lib/identifiers";
 import { lookupPrice } from "@/server/price";
 import {
@@ -14,12 +14,14 @@ import {
 } from "@/lib/verdict";
 import { agentModel, AGENT_MODEL_ID } from "@/server/ai";
 import { directoryData, reportData } from "@/server/agent-data";
-import { createAgentTools, findSimilarReports, lookupDirectory, tracked, type AgentDeps, type AgentOptions, type ToolContext } from "@/server/agent-tools";
+import { createAgentTools, findSimilarReports, lookupDirectory, runCapturePage, runRetrieveKnowledge, runSearchWeb, tracked, type AgentDeps, type AgentOptions, type ToolContext } from "@/server/agent-tools";
 import { capturePage, type CaptureOwner } from "@/server/capture";
 import { scrapeUrl, searchWeb } from "@/server/research";
 import { retrieve } from "@/server/retrieve";
 
 // The investigation agent. Three stages:
+// The stages below can run in one call (runInvestigationAgent) or one per durable workflow step
+// (Phase 19): what they share is an AgentState, which is plain JSON.
 //   1. Look-ups that need no judgement (directory and community reports by any identifier in the
 //      request) run first, so the agent always starts informed.
 //   2. A tool-using loop gathers more evidence (knowledge, price, web, page capture).
@@ -76,23 +78,52 @@ export function defaultAgentDeps(): AgentDeps {
 /** Page capture for this investigation's owner (Phase 19 passes it in when capture is on). */
 export const captureFor = (owner: CaptureOwner) => (url: string) => capturePage(url, owner);
 
-export async function runInvestigationAgent(input: AgentInput, config: AgentRunConfig = {}): Promise<AgentResult> {
+/**
+ * What the stages hand to each other. JSON-safe, so a workflow step can return it and the next
+ * step can pick it up: the evidence found so far, the early look-up results, how many calls each
+ * tool has had, and whether a page capture was tried.
+ */
+export type AgentState = {
+  ledger: LedgerSnapshot;
+  early: Record<string, unknown>;
+  calls: Record<string, number>;
+  captureTried: boolean;
+};
+
+type Prepared = {
+  deps: AgentDeps;
+  options: AgentOptions;
+  ledger: EvidenceLedger;
+  ctx: ToolContext;
+  state: AgentState;
+  request: string;
+  statement: string;
+  ids: ReturnType<typeof extractIdentifiers>;
+};
+
+/** Set up a stage: real services plus any overrides, and the ledger and counters from `state`. */
+function prepare(input: AgentInput, config: AgentRunConfig, state?: AgentState): Prepared {
   const deps: AgentDeps = { ...defaultAgentDeps(), ...config.deps };
   const options: AgentOptions = { ...DEFAULT_OPTIONS, ...input.options, capture: Boolean(input.options?.capture ?? DEFAULT_OPTIONS.capture) && Boolean(deps.capturePage) };
-  const ledger = new EvidenceLedger();
-  const ctx: ToolContext = { ledger, deps, options, calls: {} };
-  const model = config.model ?? agentModel();
-  const modelId = config.modelId ?? AGENT_MODEL_ID;
   const request = cap(input.input, 2000);
   const statement = input.sellerStatement ? cap(input.sellerStatement, 1500) : "";
-  const ids = extractIdentifiers(`${request}\n${statement}`);
-  const unchecked: string[] = [];
-  ledger.addUserInput(`${request}${statement ? `\nThe seller said: ${statement}` : ""}`);
-  let degraded: string | null = null;
-  let inputTokens = 0, outputTokens = 0;
+  const ledger = state ? EvidenceLedger.restore(state.ledger) : new EvidenceLedger();
+  if (!state) ledger.addUserInput(`${request}${statement ? `\nThe seller said: ${statement}` : ""}`);
+  const ctx: ToolContext = { ledger, deps, options, calls: { ...(state?.calls ?? {}) } };
+  const current: AgentState = state ?? { ledger: ledger.snapshot(), early: {}, calls: {}, captureTried: false };
+  return { deps, options, ledger, ctx, state: current, request, statement, ids: extractIdentifiers(`${request}\n${statement}`) };
+}
 
-  // ── 1. Look-ups that need no judgement
-  const early: Record<string, unknown> = {};
+const save = (p: Prepared, patch: Partial<AgentState> = {}): AgentState => ({ ...p.state, ...patch, ledger: p.ledger.snapshot(), calls: { ...p.ctx.calls } });
+
+/**
+ * Stage 1, search sources: the look-ups that need no judgement (directory and community reports by
+ * any identifier in the request) and, when asked, a web search about the seller.
+ */
+export async function searchSources(input: AgentInput, config: AgentRunConfig = {}, state?: AgentState, opts: { webSearch?: boolean } = {}): Promise<AgentState> {
+  const p = prepare(input, config, state);
+  const { ctx, ids, request, options } = p;
+  const early: Record<string, unknown> = { ...p.state.early };
   const domain = ids.domains[0];
   const phone = ids.phones[0];
   const upi = ids.upis[0];
@@ -101,11 +132,50 @@ export async function runInvestigationAgent(input: AgentInput, config: AgentRunC
     early.directory = await tracked("lookupDirectory", ctx, (q: Parameters<typeof lookupDirectory>[1]) => lookupDirectory(ctx, q))({ domain, phone, upi, name });
     early.reports = await tracked("findSimilarReports", ctx, (q: Parameters<typeof findSimilarReports>[1]) => findSimilarReports(ctx, q))({ domain, phone, upi, text: options.knowledge ? cap(request, 300) : undefined });
   }
+  if (opts.webSearch && options.research && (domain || name)) {
+    early.web = await tracked("searchWeb", ctx, (q: { query: string }) => runSearchWeb(ctx, q))({ query: domain ? `${domain} reviews complaints` : `${name} reviews complaints` });
+  }
+  return save(p, { early });
+}
 
-  // ── 2. The tool-using loop
+/** Stage 3, capture the page in the remote browser. A failure is recorded and the run goes on. */
+export async function capturePageStage(input: AgentInput, config: AgentRunConfig, state: AgentState, url: string): Promise<{ state: AgentState; ok: boolean; reason?: string }> {
+  const p = prepare(input, config, state);
+  const out = await tracked("capturePage", p.ctx, (q: { url: string }) => runCapturePage(p.ctx, q))({ url });
+  return { state: save(p, { captureTried: true }), ok: out.ok === true, reason: typeof out.reason === "string" ? out.reason : typeof out.error === "string" ? out.error : undefined };
+}
+
+/** Stage 4, retrieve benchmarks: tariffs and advisories that bear on the request. */
+export async function retrieveBenchmarks(input: AgentInput, config: AgentRunConfig, state: AgentState): Promise<AgentState> {
+  const p = prepare(input, config, state);
+  if (p.options.knowledge) {
+    await tracked("retrieveKnowledge", p.ctx, (q: Parameters<typeof runRetrieveKnowledge>[1]) => runRetrieveKnowledge(p.ctx, q))({ query: cap(p.request, 300), types: ["TARIFF", "ADVISORY"] });
+  }
+  return save(p);
+}
+
+/** Short list of what is already in the ledger, so the model does not repeat a search. */
+const ledgerSummary = (ledger: EvidenceLedger) =>
+  ledger.all().map((s) => `${s.id} ${s.kind} ${s.unavailable ? "(unavailable) " : ""}${s.title}${s.label ? ` [${s.label}]` : ""}`).join("\n");
+
+/** Stage 5, analyse: the tool loop for anything still missing, then the verdict, then the rules. */
+export async function analyse(input: AgentInput, config: AgentRunConfig = {}, state?: AgentState): Promise<AgentResult> {
+  const p = prepare(input, config, state);
+  const { ctx, ledger, options, ids, request, statement } = p;
+  const model = config.model ?? agentModel();
+  const modelId = config.modelId ?? AGENT_MODEL_ID;
+  const unchecked: string[] = [];
+  let degraded: string | null = null;
+  let inputTokens = 0, outputTokens = 0;
+  const early = p.state.early;
+  const captured = p.state.captureTried && ledger.all().some((s) => s.via === "browserbase" && !s.unavailable);
+
+  // ── The tool-using loop
   let notes = "";
   let steps = 0;
   const tools = createAgentTools(ctx);
+  // A capture that was already tried in its own step is not offered again.
+  if (p.state.captureTried) delete tools.capturePage;
   try {
     const agent = new ToolLoopAgent({ model, instructions: AGENT_INSTRUCTIONS, tools, stopWhen: isStepCount(config.maxSteps ?? 8), temperature: 0.2 });
     const prompt = [
@@ -114,6 +184,7 @@ export async function runInvestigationAgent(input: AgentInput, config: AgentRunC
       statement ? `What the seller said:\n<seller_statement>\n${statement}\n</seller_statement>` : null,
       `Identifiers found: ${JSON.stringify(ids)}`,
       Object.keys(early).length ? `Checks already done for you (use these results; do not repeat them):\n${JSON.stringify(early)}` : "No identifiers were found in the request, so no automatic directory check ran.",
+      `Evidence already gathered (cite by id):\n${ledgerSummary(ledger)}`,
       `Tools you have: ${Object.keys(tools).join(", ")}.`,
     ].filter(Boolean).join("\n\n");
     const run = await agent.generate({ prompt, abortSignal: config.abortSignal ?? AbortSignal.timeout(100_000) });
@@ -131,12 +202,12 @@ export async function runInvestigationAgent(input: AgentInput, config: AgentRunC
   // What was not checked, in plain words.
   if (!options.research) unchecked.push("Web research was switched off.");
   if (!options.knowledge) unchecked.push("The knowledge base was not searched.");
-  if (!options.capture) unchecked.push("The page was not opened in a live browser.");
-  const unreadable = ledger.all().filter((s) => s.unavailable).length;
+  if (!captured) unchecked.push(p.state.captureTried ? "The page could not be opened in a live browser." : "The page was not opened in a live browser.");
+  const unreadable = ledger.all().filter((s) => s.unavailable && !(s.via === "browserbase")).length;
   if (unreadable) unchecked.push(`${unreadable} web page${unreadable === 1 ? "" : "s"} could not be read.`);
-  if (ids.urls.length > 0 && !ctx.calls.scrapePage && !ctx.calls.capturePage) unchecked.push("The page behind the link was not read.");
+  if (ids.urls.length > 0 && !ctx.calls.scrapePage && !ctx.calls.capturePage && !captured) unchecked.push("The page behind the link was not read.");
 
-  // ── 3. The verdict
+  // ── The verdict
   let verdict: FinalVerdict;
   let adjustments: string[] = [];
   try {
@@ -164,4 +235,9 @@ export async function runInvestigationAgent(input: AgentInput, config: AgentRunC
     modelId,
     promptVersion: PROMPT_VERSION,
   };
+}
+
+/** All stages in one call: the look-ups, then the agent. Used by tests and one-off checks. */
+export async function runInvestigationAgent(input: AgentInput, config: AgentRunConfig = {}): Promise<AgentResult> {
+  return analyse(input, config, await searchSources(input, config));
 }

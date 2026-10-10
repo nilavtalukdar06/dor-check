@@ -24,6 +24,9 @@ export type LedgerSource = {
 export type NewSource = Omit<LedgerSource, "id" | "retrievedAt" | "unavailable" | "meta" | "links" | "snippet" | "excerpt" | "domain" | "label" | "url"> &
   Partial<Pick<LedgerSource, "retrievedAt" | "unavailable" | "meta" | "links" | "snippet" | "excerpt" | "domain" | "label" | "url">>;
 
+/** A ledger saved between workflow steps (JSON-safe). */
+export type LedgerSnapshot = { sources: LedgerSource[]; keys: [string, string][]; found: number };
+
 /**
  * Everything the tools found in one investigation, with a short id each. Tools register what
  * they read; the verdict may only cite these ids. The same document found twice keeps one id.
@@ -86,6 +89,19 @@ export class EvidenceLedger {
       links: {},
     });
     return "U1";
+  }
+
+  /** Save the ledger so a later workflow step can carry on with the same ids and de-duplication. */
+  snapshot(): LedgerSnapshot {
+    return { sources: structuredClone(this.sources), keys: [...this.byKey.entries()], found: this.found };
+  }
+
+  static restore(snap: LedgerSnapshot, now?: () => Date): EvidenceLedger {
+    const l = new EvidenceLedger(now);
+    l.sources = structuredClone(snap.sources);
+    l.byKey = new Map(snap.keys);
+    l.found = snap.found;
+    return l;
   }
 
   get(id: string) {

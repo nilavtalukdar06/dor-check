@@ -33,3 +33,13 @@ export const helloRequested = eventType("dev/hello.requested", {
 export const captureRequested = eventType("capture/page.requested", {
   schema: z.object({ investigationId: z.string() }),
 });
+
+/** A traveller started an investigation. The workflow reads everything else from the database. */
+export const investigationRequested = eventType("investigation/requested", {
+  schema: z.object({ investigationId: z.string(), userId: z.string() }),
+});
+
+/** A traveller stopped an investigation that was running. */
+export const investigationCancelled = eventType("investigation/cancelled", {
+  schema: z.object({ investigationId: z.string() }),
+});

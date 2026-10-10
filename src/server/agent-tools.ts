@@ -189,6 +189,77 @@ export async function findSimilarReports(ctx: ToolContext, q: ReportQuery) {
   return { ok: true, sameIdentifier: exactOut, similarByMeaning: similar, note: "Community reports are unverified allegations: signals, never proof." };
 }
 
+export type KnowledgeQuery = { query: string; types?: string[]; district?: string };
+
+/** Search the knowledge base and register each chunk found as a citable source. */
+export async function runRetrieveKnowledge(ctx: ToolContext, q: KnowledgeQuery) {
+  const { deps, ledger } = ctx;
+  const hits = await deps.retrieve(q.query, { topK: 5, ...(q.types?.length ? { types: q.types as never } : {}), ...(q.district ? { district: q.district } : {}), minScore: 0.25 });
+  return {
+    ok: true,
+    results: hits.map((h) => ({
+      sourceId: ledger.add(
+        {
+          kind: KIND_OF[h.type] ?? "KNOWLEDGE",
+          title: h.title,
+          url: h.url,
+          label: h.type === "report" ? "community report" : h.sourceName,
+          via: "pinecone",
+          meta: { score: Math.round(h.score * 100) / 100, status: h.status },
+          excerpt: h.text,
+          links: { knowledgeDocumentId: h.documentId },
+        },
+        `doc:${h.documentId}`,
+      ),
+      title: h.title,
+      type: h.type,
+      district: h.district,
+      text: clip(h.text, 400),
+      score: Math.round(h.score * 100) / 100,
+      status: h.status,
+    })),
+  };
+}
+
+/** Search the public web; hits are weak evidence (snippets only) until a page is read. */
+export async function runSearchWeb(ctx: ToolContext, q: { query: string }) {
+  const hits = await ctx.deps.searchWeb(q.query, { limit: 5 });
+  return {
+    ok: true,
+    results: hits.map((h) => ({
+      sourceId: ctx.ledger.add({ kind: "WEB_PAGE", title: h.title, url: h.url, via: "firecrawl", domain: h.domain, snippet: h.snippet, retrievedAt: h.retrievedAt }, h.url),
+      title: h.title,
+      url: h.url,
+      domain: h.domain,
+      snippet: clip(h.snippet, 240),
+    })),
+  };
+}
+
+/** Open the page in the remote browser (when available); a failure is recorded, never thrown. */
+export async function runCapturePage(ctx: ToolContext, q: { url: string }) {
+  const capture = ctx.deps.capturePage;
+  if (!capture) return { ok: false, error: "Page capture is not available for this run." };
+  const res = await capture(q.url);
+  if (!res.ok) {
+    const sourceId = ctx.ledger.add({ kind: "WEB_PAGE", title: hostOf(q.url), url: q.url, via: "browserbase", unavailable: true }, `capture:${q.url}`);
+    return { ok: false, sourceId, reason: res.message };
+  }
+  const sourceId = ctx.ledger.add(
+    {
+      kind: "WEB_PAGE",
+      title: res.pageTitle ?? hostOf(res.finalUrl),
+      url: res.finalUrl,
+      via: "browserbase",
+      domain: hostOf(res.finalUrl),
+      meta: { asksForAdvancePayment: res.facts?.asksForAdvancePayment ?? null, screenshot: res.evidence.some((e) => e.kind === "SCREENSHOT") },
+      excerpt: res.facts ? JSON.stringify(res.facts) : "The page text could not be read; a screenshot was saved.",
+    },
+    `capture:${res.finalUrl}`,
+  );
+  return { ok: true, sourceId, title: res.pageTitle, finalUrl: res.finalUrl, facts: res.facts, evidenceSaved: res.evidence.length };
+}
+
 // ───────────── the tool set ─────────────
 
 /** Build the tools for one run. Which ones exist depends on the options chosen and what is available. */
@@ -216,33 +287,7 @@ export function createAgentTools(ctx: ToolContext) {
         types: z.array(z.enum(KNOWLEDGE_TYPES as [string, ...string[]])).optional().describe("Limit to some of: TARIFF, DIRECTORY, ADVISORY, REPORT."),
         district: z.string().optional().describe("District name, e.g. Shillong."),
       }),
-      execute: tracked("retrieveKnowledge", ctx, async (q: { query: string; types?: string[]; district?: string }) => {
-        const hits = await deps.retrieve(q.query, { topK: 5, ...(q.types?.length ? { types: q.types as never } : {}), ...(q.district ? { district: q.district } : {}), minScore: 0.25 });
-        return {
-          ok: true,
-          results: hits.map((h) => ({
-            sourceId: ledger.add(
-              {
-                kind: KIND_OF[h.type] ?? "KNOWLEDGE",
-                title: h.title,
-                url: h.url,
-                label: h.type === "report" ? "community report" : h.sourceName,
-                via: "pinecone",
-                meta: { score: Math.round(h.score * 100) / 100, status: h.status },
-                excerpt: h.text,
-                links: { knowledgeDocumentId: h.documentId },
-              },
-              `doc:${h.documentId}`,
-            ),
-            title: h.title,
-            type: h.type,
-            district: h.district,
-            text: clip(h.text, 400),
-            score: Math.round(h.score * 100) / 100,
-            status: h.status,
-          })),
-        };
-      }),
+      execute: tracked("retrieveKnowledge", ctx, (q: KnowledgeQuery) => runRetrieveKnowledge(ctx, q)),
     });
   }
 
@@ -286,19 +331,7 @@ export function createAgentTools(ctx: ToolContext) {
     tools.searchWeb = tool({
       description: "Search the public web. Results are only titles, links and short snippets from search engines: weak evidence on their own. Read a page with scrapePage before relying on it.",
       inputSchema: z.object({ query: z.string().min(3).describe("A focused search, e.g. the business name plus 'reviews' or the website plus 'complaints'.") }),
-      execute: tracked("searchWeb", ctx, async (q: { query: string }) => {
-        const hits = await deps.searchWeb(q.query, { limit: 5 });
-        return {
-          ok: true,
-          results: hits.map((h) => ({
-            sourceId: ledger.add({ kind: "WEB_PAGE", title: h.title, url: h.url, via: "firecrawl", domain: h.domain, snippet: h.snippet, retrievedAt: h.retrievedAt }, h.url),
-            title: h.title,
-            url: h.url,
-            domain: h.domain,
-            snippet: clip(h.snippet, 240),
-          })),
-        };
-      }),
+      execute: tracked("searchWeb", ctx, (q: { query: string }) => runSearchWeb(ctx, q)),
     });
 
     tools.scrapePage = tool({
@@ -317,30 +350,10 @@ export function createAgentTools(ctx: ToolContext) {
   }
 
   if (options.capture && deps.capturePage) {
-    const capture = deps.capturePage;
     tools.capturePage = tool({
       description: "Open the page in a secure remote browser, take a timestamped screenshot as evidence and read what the page says (prices, payment instructions, UPI ids). Read-only: it never types, clicks or submits. Slow and costly; use at most once, only for a link the evidence so far does not settle.",
       inputSchema: z.object({ url: z.string().describe("A full http or https address.") }),
-      execute: tracked("capturePage", ctx, async (q: { url: string }) => {
-        const res = await capture(q.url);
-        if (!res.ok) {
-          const sourceId = ledger.add({ kind: "WEB_PAGE", title: hostOf(q.url), url: q.url, via: "browserbase", unavailable: true }, `capture:${q.url}`);
-          return { ok: false, sourceId, reason: res.message };
-        }
-        const sourceId = ledger.add(
-          {
-            kind: "WEB_PAGE",
-            title: res.pageTitle ?? hostOf(res.finalUrl),
-            url: res.finalUrl,
-            via: "browserbase",
-            domain: hostOf(res.finalUrl),
-            meta: { asksForAdvancePayment: res.facts?.asksForAdvancePayment ?? null, screenshot: res.evidence.some((e) => e.kind === "SCREENSHOT") },
-            excerpt: res.facts ? JSON.stringify(res.facts) : "The page text could not be read; a screenshot was saved.",
-          },
-          `capture:${res.finalUrl}`,
-        );
-        return { ok: true, sourceId, title: res.pageTitle, finalUrl: res.finalUrl, facts: res.facts, evidenceSaved: res.evidence.length };
-      }),
+      execute: tracked("capturePage", ctx, (q: { url: string }) => runCapturePage(ctx, q)),
     });
   }
 
