@@ -25,7 +25,8 @@
     "knowledge:sync": "node --env-file=.env --import tsx scripts/knowledge-sync.mts",
     "test:knowledge": "node --env-file=.env --import tsx scripts/knowledge-check.mts",
     "test:agent": "node --env-file=.env --import tsx scripts/agent-check.mts",
-    "test:investigation": "node --env-file=.env --import tsx scripts/investigation-check.mts"
+    "test:investigation": "node --env-file=.env --import tsx scripts/investigation-check.mts",
+    "test:reports": "node --env-file=.env --import tsx scripts/reports-check.mts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.93",

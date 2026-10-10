@@ -74,7 +74,8 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 19 Investigation workflow | Done: `run-investigation` Inngest function, six recorded steps, timeline events, results/sources/matches/usage/notification saved, cancel |
 | 20 Investigate form and live run screen | Done: `/investigate` form (usage limit enforced), `/investigate/[id]` live run with realtime timeline, live browser preview and sources, cancel; minimal result page at `/investigate/[id]/verdict` |
 | 21 Verdict page | Done: banner, why flagged, evidence, sources, guidance, map, ask dock, export (print), share link, Report this link |
-| 22 onwards | Open |
+| 22 Community reports | Done: `/reports` list with tabs, search and filters; `/reports/new` form; `/reports/[ref]` detail with status history, attachments, similar reports and follow; `report/submitted` workflow (auto-check, moderator alert, searchable); status machine |
+| 23 onwards | Open |
 
 Decisions that override the original text below:
 
@@ -483,7 +484,7 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 - **Realtime live preview:** the panel embeds `LiveBrowser` (the Browserbase live view, read-only) and subscribes to the Inngest Realtime channel `capture-run:<id>` (`inngest/channels.ts`: topics `event` and `finished`). The `capture-page` function publishes every browser action and the final status; the panel adds each step to its timeline as it arrives, and when the run finishes it swaps the live frame for the final screenshot and refreshes the grid. A 6-second refresh stays as a fallback for a missed message. Verified with the fallback switched off.
 - **Private by design:** every query, route and token is limited to the item's owner; files are served only through short-lived signed links (`/api/evidence/[id]/file`, `?download=1` to save). A realtime token is only minted for the owner of the run.
 - **Delete** removes the row (soft) and the file, but an item a report cites cannot be deleted.
-- **The "attachment picker" for reports lands in Phase 22**, because the report form does not exist yet. It will call `listEvidence` from `server/evidence.ts`.
+- **The report attachment picker** is part of the Phase 22 report form (it lists the reporter's own vault images and accepts new uploads through the same upload route).
 - A page the browser cannot read (for example the Gemini quota is used up) still saves the screenshot; the timeline says so in plain words and the technical reason goes to the server log.
 - `Evidence` rows made by `/dev/capture` show up in the vault too, because they belong to the same person.
 
@@ -662,6 +663,16 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 4. Status machine: NEW → UNDER_REVIEW → VERIFIED / RESOLVED / CLOSED / REJECTED, each change adds a `ReportStatusEvent` and a notification to followers.
 5. Public detail separates "Reporter allegation" (labelled "Not verified") from "Official finding" (green, moderator only).
 6. Rate-limit submissions per user (see Phase 29).
+
+**Built (differs from the text above):**
+- **List** (`/reports`): tabs All / Following / Mine / Verified, search, filters (category, district, status), 12 a page; every control writes to the URL. Everyone sees public, non-rejected reports; **Mine** also shows your own whatever their state. The map layer no longer shows rejected reports.
+- **Form** (`/reports/new`): React Hook Form with the shared Zod schema (`lib/reports.ts`, the same rules run on the server); kind, short title, what happened, category, district, a place (the same Mapbox place box as the price check, so a report with a place appears on the Explore map), date, amount, website, evidence, and an anonymous switch (on by default). **Attachments** are dropped screenshots or items from the Evidence vault (the report attachment picker deferred from Phase 16); only the reporter's own files can be attached. `?investigation=<id>` (from the verdict's Report this) fills the form and attaches that investigation's screenshots. At most 5 reports an hour per person. Voice is Phase 26 and is not on the form yet.
+- **References:** `TTD-` plus six characters from an alphabet with no 0, 1, I, L or O (older seeded ones keep their form).
+- **Privacy:** the reporter is stored and never shown. To other travellers the allegation has phone numbers, UPI ids and emails hidden, the web address shows only the site, and attachments are not opened (only the reporter and moderators see them). Rejected and hidden reports are "not found" to everyone but the reporter and moderators. The seller's web address, UPI id and phone number are stored as identifiers (masked) so the same seller is recognised in later checks.
+- **`report/submitted` workflow** (`process-report`): the auto-check compares the report with the others (same address, UPI id or phone in another public report, and reports that read alike through Pinecone), writes `ReportSimilarity`, `autoCheckSummary` ("Auto: matches 3 reports") and a history line, and puts a report with two or more matches at HIGH priority; moderators and admins get a notification; the community-reports knowledge source is re-synced so the report becomes searchable. Verified: the check arrives about 8 seconds after submitting.
+- **Status machine** (`changeReportStatus`): NEW to UNDER_REVIEW, REJECTED or CLOSED; UNDER_REVIEW to VERIFIED, RESOLVED, CLOSED or REJECTED; VERIFIED to RESOLVED, CLOSED or UNDER_REVIEW; RESOLVED to CLOSED; CLOSED and REJECTED are final. Moderators and admins only; every change is a history line, followers (not the moderator) are notified, and two moderators acting at once cannot both apply a step. **There is no moderator screen yet: Phase 27 builds the queue that calls it.**
+- **Detail** (`/reports/[ref]`): the reporter's allegation (always labelled "Not verified"), the **official finding** as its own green card (moderators publish these in Phase 23/27; withdrawn ones are hidden), status history with the steps still ahead greyed out, similar reports with the reason, attachments, a follow button with the count. **The discussion is Phase 23** (Stream).
+- The sidebar's Community count is still a demo number until Phase 28.
 
 **Done when:** a new report appears in the list with an auto-check summary.
 

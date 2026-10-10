@@ -22,6 +22,8 @@ export async function getMapSignals(query: MapQuery): Promise<{ signals: MapSign
       ? prisma.report.findMany({
           where: {
             visibility: "PUBLIC",
+            // A rejected report is not credible enough to put on the map.
+            status: { not: "REJECTED" },
             deletedAt: null,
             lat: { not: null },
             lng: { not: null },
