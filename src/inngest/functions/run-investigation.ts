@@ -1,6 +1,6 @@
 import { NonRetriableError } from "inngest";
 import { extractIdentifiers } from "@/lib/identifiers";
-import { capturableUrl, describeRequest, describeSources, type InvestigationStepKey } from "@/lib/investigation";
+import { capturableUrl, compactSources, describeRequest, describeSources, type InvestigationStepKey } from "@/lib/investigation";
 import prisma from "@/lib/prisma";
 import { withTimeout } from "@/lib/retry";
 import { analyse, capturePageStage, captureFor, retrieveBenchmarks, searchSources, type AgentResult, type AgentState } from "@/server/agent";
@@ -64,7 +64,7 @@ export const runInvestigation = inngest.createFunction(
         await note(ref, "search-sources", "research_started", "Checking the directory and community reports");
         const s = await withTimeout(searchSources(input, { deps: record("search-sources") }, undefined, { webSearch: true }), 60_000);
         await note(ref, "search-sources", "sources_found", describeSources(s.ledger.sources));
-        await finishStep(ref, "search-sources", "COMPLETED", { startedAt: t, output: { sources: s.ledger.sources.length } });
+        await finishStep(ref, "search-sources", "COMPLETED", { startedAt: t, output: { sources: s.ledger.sources.length, found: compactSources(s.ledger.sources) } });
         return s;
       } catch (err) {
         return failStep(ref, "search-sources", err, t);
@@ -99,7 +99,7 @@ export const runInvestigation = inngest.createFunction(
       try {
         const res = await withTimeout(capturePageStage(input, { deps }, state, link), 120_000);
         if (res.ok) {
-          await finishStep(ref, "capture-page", "COMPLETED", { startedAt: t });
+          await finishStep(ref, "capture-page", "COMPLETED", { startedAt: t, output: { found: compactSources(res.state.ledger.sources.filter((x) => x.via === "browserbase")) } });
         } else {
           await note(ref, "capture-page", "capture_failed", res.reason ?? "The page could not be captured");
           await finishStep(ref, "capture-page", "FAILED", { startedAt: t, error: res.reason ?? "The page could not be captured" });
@@ -125,7 +125,7 @@ export const runInvestigation = inngest.createFunction(
         const s = await withTimeout(retrieveBenchmarks(input, { deps: record("retrieve-benchmarks") }, state), 45_000);
         const found = s.ledger.sources.filter((x) => x.kind === "TARIFF" || x.kind === "ADVISORY").length;
         await note(ref, "retrieve-benchmarks", "benchmark_calculated", found ? `Found ${found} tariff and advisory references` : "No matching tariffs or advisories");
-        await finishStep(ref, "retrieve-benchmarks", "COMPLETED", { startedAt: t, output: { references: found } });
+        await finishStep(ref, "retrieve-benchmarks", "COMPLETED", { startedAt: t, output: { references: found, found: compactSources(s.ledger.sources.filter((x) => x.kind === "TARIFF" || x.kind === "ADVISORY")) } });
         return s;
       } catch (err) {
         return failStep(ref, "retrieve-benchmarks", err, t);

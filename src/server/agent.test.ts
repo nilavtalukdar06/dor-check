@@ -216,6 +216,18 @@ describe("options", () => {
   });
 });
 
+describe("a community report is one source however it was found", () => {
+  it("does not list the same report twice when it matches by identifier and by meaning", async () => {
+    const { deps } = fakeDeps({
+      retrieve: async () => [{ id: "doc9:0", documentId: "doc9", score: 0.8, text: "Community report TTD-5F2K8W (not verified): Fake booking page.", title: "Report TTD-5F2K8W: Fake booking page", url: null, type: "report", sourceName: "Past community reports", sourceHost: "Internal", district: "East Khasi Hills", retrievedAt: "2026-10-09T00:00:00.000Z", status: "NEW" }],
+    });
+    const loop = scripted([{ call: { name: "retrieveKnowledge", input: { query: "fake booking page", types: ["REPORT"] } } }, { text: "ok" }]);
+    const res = await runInvestigationAgent(LINK, { deps, model: loop.model, verdictModel: scripted([verdictJson({})]).model });
+    const refs = res.ledger.filter((s) => s.kind === "REPORT").map((s) => s.title.match(/TTD-[A-Z0-9]{6}/)?.[0]);
+    expect(refs.filter((r) => r === "TTD-5F2K8W")).toHaveLength(1);
+  });
+});
+
 describe("tools", () => {
   it("registers a price comparison as a citable tariff source", async () => {
     const { deps, records } = fakeDeps({

@@ -83,3 +83,13 @@ export const maskUpi = (upi: string) => {
   const [name, bank] = upi.split("@");
   return `${name.slice(0, 2)}•••@${bank ?? ""}`;
 };
+
+export type FoundSource = { kind: string; title: string; label: string | null; url: string | null };
+
+/** A short list of what a step found, kept on the step so the live screen can show it before the verdict exists. */
+export function compactSources(sources: readonly { kind: string; title: string; label: string | null; url: string | null; unavailable: boolean }[], limit = 12): FoundSource[] {
+  return sources
+    .filter((s) => !s.unavailable && s.kind !== "USER")
+    .slice(0, limit)
+    .map((s) => ({ kind: s.kind, title: s.title.slice(0, 120), label: s.label, url: s.url }));
+}

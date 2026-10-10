@@ -44,6 +44,10 @@ export type AgentDeps = {
 export const CALL_LIMITS: Record<string, number> = { searchWeb: 3, scrapePage: 4, capturePage: 1, retrieveKnowledge: 5, lookupDirectory: 4, findSimilarReports: 4, comparePrice: 3 };
 
 const KIND_OF: Record<string, LedgerKind> = { tariff: "TARIFF", directory: "DIRECTORY", advisory: "ADVISORY", report: "REPORT", page: "KNOWLEDGE" };
+/** A community report is one source however it was found: by its reference (TTD-XXXXXX), not by how it was matched. */
+export const reportKey = (reference: string) => `reportref:${reference}`;
+const referenceIn = (title: string) => title.match(/\bTTD-[A-Z0-9]{6}\b/)?.[0] ?? null;
+
 const clip = (s: string | null | undefined, n: number) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
 export type ToolContext = { ledger: EvidenceLedger; deps: AgentDeps; options: AgentOptions; /** Calls made so far per tool, shared by the agent and the runner's own lookups. */ calls: Record<string, number> };
@@ -163,7 +167,7 @@ export async function findSimilarReports(ctx: ToolContext, q: ReportQuery) {
         excerpt: `Community report ${r.reference} (not verified), status ${r.status.toLowerCase().replace("_", " ")}, in ${r.districtName}: ${r.summary}. It names the same ${r.matchedOn.join(" and ")} being checked.`,
         links: { reportId: r.id },
       },
-      `report:${r.id}`,
+      reportKey(r.reference),
     ),
     reference: r.reference,
     status: r.status,
@@ -179,7 +183,7 @@ export async function findSimilarReports(ctx: ToolContext, q: ReportQuery) {
     similar = hits.map((h) => ({
       sourceId: ctx.ledger.add(
         { kind: "REPORT", title: h.title, label: "community report", via: "pinecone", meta: { status: h.status, score: Math.round(h.score * 100) / 100 }, excerpt: h.text, links: { knowledgeDocumentId: h.documentId } },
-        `doc:${h.documentId}`,
+        referenceIn(h.title) ? reportKey(referenceIn(h.title)!) : `doc:${h.documentId}`,
       ),
       title: h.title,
       status: h.status,
@@ -209,7 +213,7 @@ export async function runRetrieveKnowledge(ctx: ToolContext, q: KnowledgeQuery) 
           excerpt: h.text,
           links: { knowledgeDocumentId: h.documentId },
         },
-        `doc:${h.documentId}`,
+        h.type === "report" && referenceIn(h.title) ? reportKey(referenceIn(h.title)!) : `doc:${h.documentId}`,
       ),
       title: h.title,
       type: h.type,

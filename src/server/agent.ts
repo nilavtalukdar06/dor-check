@@ -35,6 +35,8 @@ export type AgentInput = {
   /** "Anything the seller said (optional)". */
   sellerStatement?: string | null;
   options?: Partial<AgentOptions>;
+  /** Hints the traveller chose on the form. */
+  context?: { district?: string | null; service?: string | null };
 };
 
 export type AgentRunConfig = {
@@ -69,6 +71,10 @@ const DEFAULT_OPTIONS: AgentOptions = { research: true, capture: false, knowledg
 const LABEL: Record<AgentInput["inputType"], string> = { LINK: "link to a booking or listing", BUSINESS_NAME: "business name", MESSAGE: "message from a seller", CONTACT: "phone number or UPI id" };
 
 const cap = (s: string, n: number) => s.trim().slice(0, n);
+
+/** "District: Shillong. Service: taxi." or an empty string. */
+const contextLine = (c: AgentInput["context"]) =>
+  [c?.district ? `District: ${c.district}` : null, c?.service && c.service !== "OTHER" ? `Service: ${c.service.toLowerCase()}` : null].filter(Boolean).join(". ");
 
 /** Real services for everything a run needs. */
 export function defaultAgentDeps(): AgentDeps {
@@ -149,7 +155,10 @@ export async function capturePageStage(input: AgentInput, config: AgentRunConfig
 export async function retrieveBenchmarks(input: AgentInput, config: AgentRunConfig, state: AgentState): Promise<AgentState> {
   const p = prepare(input, config, state);
   if (p.options.knowledge) {
-    await tracked("retrieveKnowledge", p.ctx, (q: Parameters<typeof runRetrieveKnowledge>[1]) => runRetrieveKnowledge(p.ctx, q))({ query: cap(p.request, 300), types: ["TARIFF", "ADVISORY"] });
+    // The district and service the traveller chose make the search more specific (as words, not a filter:
+    // taxi tariffs carry no district).
+    const hint = contextLine(input.context).replace(/^District: /, "in ").replace(/\. Service: /, ", ");
+    await tracked("retrieveKnowledge", p.ctx, (q: Parameters<typeof runRetrieveKnowledge>[1]) => runRetrieveKnowledge(p.ctx, q))({ query: cap(`${p.request}${hint ? ` ${hint}` : ""}`, 300), types: ["TARIFF", "ADVISORY"] });
   }
   return save(p);
 }
@@ -182,6 +191,7 @@ export async function analyse(input: AgentInput, config: AgentRunConfig = {}, st
       `Check this ${LABEL[input.inputType]}:`,
       `<request>\n${request}\n</request>`,
       statement ? `What the seller said:\n<seller_statement>\n${statement}\n</seller_statement>` : null,
+      contextLine(input.context) ? `The traveller says: ${contextLine(input.context)}.` : null,
       `Identifiers found: ${JSON.stringify(ids)}`,
       Object.keys(early).length ? `Checks already done for you (use these results; do not repeat them):\n${JSON.stringify(early)}` : "No identifiers were found in the request, so no automatic directory check ran.",
       `Evidence already gathered (cite by id):\n${ledgerSummary(ledger)}`,
@@ -211,7 +221,7 @@ export async function analyse(input: AgentInput, config: AgentRunConfig = {}, st
   let verdict: FinalVerdict;
   let adjustments: string[] = [];
   try {
-    const dossier = buildDossier({ request: `${LABEL[input.inputType]}: ${cap(request, 1200)}${statement ? `\nSeller said: ${cap(statement, 600)}` : ""}`, identifiers: JSON.stringify(ids), ledger, notes, unchecked });
+    const dossier = buildDossier({ request: `${LABEL[input.inputType]}: ${cap(request, 1200)}${statement ? `\nSeller said: ${cap(statement, 600)}` : ""}${contextLine(input.context) ? `\n${contextLine(input.context)}.` : ""}`, identifiers: JSON.stringify(ids), ledger, notes, unchecked });
     const res = await generateText({ model: config.verdictModel ?? model, system: VERDICT_SYSTEM, prompt: dossier, output: Output.object({ schema: modelVerdictSchema }), temperature: 0.2, abortSignal: config.abortSignal ?? AbortSignal.timeout(60_000) });
     inputTokens += res.usage?.inputTokens ?? 0;
     outputTokens += res.usage?.outputTokens ?? 0;

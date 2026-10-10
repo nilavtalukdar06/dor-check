@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractIdentifiers } from "./identifiers";
-import { capturableUrl, describeRequest, describeSources, INVESTIGATION_STEPS, investigationTitle, maskPhone, maskUpi, usagePeriodStart } from "./investigation";
+import { capturableUrl, compactSources, describeRequest, describeSources, INVESTIGATION_STEPS, investigationTitle, maskPhone, maskUpi, usagePeriodStart } from "./investigation";
 
 describe("steps", () => {
   it("are the six from the plan, in order, with unique keys", () => {
@@ -49,5 +49,17 @@ describe("masking", () => {
   it("keeps enough to recognise", () => {
     expect(maskPhone("9876543210")).toBe("98••••••10");
     expect(maskUpi("ravi.k@okaxis")).toBe("ra•••@okaxis");
+  });
+});
+
+describe("compactSources", () => {
+  const src = (kind: string, title: string, unavailable = false) => ({ kind, title, label: null, url: null, unavailable });
+  it("leaves out the message and unreadable pages and caps the list", () => {
+    const list = compactSources([src("USER", "What you sent"), src("REPORT", "r1"), src("WEB_PAGE", "gone", true), ...Array.from({ length: 20 }, (_, i) => src("TARIFF", `t${i}`))], 5);
+    expect(list).toHaveLength(5);
+    expect(list.map((x) => x.title)).toEqual(["r1", "t0", "t1", "t2", "t3"]);
+  });
+  it("shortens long titles", () => {
+    expect(compactSources([src("REPORT", "x".repeat(300))])[0].title).toHaveLength(120);
   });
 });

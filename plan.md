@@ -72,7 +72,8 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 17 Pinecone hosted embeddings | Done: integrated index `llama-text-embed-v2`, `retrieve()`, durable `source/sync.requested` workflow, Knowledge screen with Test a query; 81 chunks indexed |
 | 18 AI SDK agent and tools | Done: `runInvestigationAgent` (tools, evidence ledger, rule-checked typed verdict), saved as `InvestigationResult`, every tool call recorded |
 | 19 Investigation workflow | Done: `run-investigation` Inngest function, six recorded steps, timeline events, results/sources/matches/usage/notification saved, cancel |
-| 20 onwards | Open |
+| 20 Investigate form and live run screen | Done: `/investigate` form (usage limit enforced), `/investigate/[id]` live run with realtime timeline, live browser preview and sources, cancel; minimal result page at `/investigate/[id]/verdict` |
+| 21 onwards | Open |
 
 Decisions that override the original text below:
 
@@ -602,6 +603,14 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 4. `StepTimeline` renders step state (done / running / waiting / retrying) plus tool chips.
 4a. **Live preview pane (doable; the pattern is built in Phase 16: `CapturePanel` + `LiveBrowser` + the `capture-run:<id>` realtime channel, reuse it).** While the run is RUNNING and has a `browserSessionId`, the right-hand "Live preview" card fetches `/api/investigations/[id]/live` and embeds the returned live view URL in a read-only iframe, with the current page URL and the latest action line under it ("Opening listing page…", "Reading payment instructions…"). Before the session exists it shows a skeleton with the text "Starting a secure browser…". On the `browserbase-disconnected` message, or when the run finishes, it swaps to the final screenshot with "Captured at hh:mm:ss · 1280 x 800". If the live view fails to load it falls back to the screenshot and the timeline; a failed preview never fails the run.
 5. When status is `COMPLETED`, redirect to the verdict.
+
+**Built (differs from the text above):**
+- **Form** (`/investigate`): the four tabs (each keeps its own text), district and service hints (saved on the investigation and used to make the tariff search more specific), the seller statement, option chips (web research, capture and knowledge on; compare price off), the side panels and two seeded examples; `?url=` prefills the address. The server action checks the plan limit (`server/usage.ts`: this month's `UsageRecord` against the plan's `investigationsPerMonth`; **staff are not limited**), refuses unsafe addresses, then calls `startInvestigation` and sends the person to the run screen.
+- **Live updates use Inngest Realtime, not SSE** (the live preview is the point, and captures and price checks already work this way): channel `investigation-run:<id>` (`update`, `finished`), published from the workflow's step and event bookkeeping, token minted only for the owner. Each message triggers a debounced re-read of the database, with a 6-second refresh as a fallback. Verified with the fallback switched off.
+- **Run screen** (`/investigate/[id]`): the six-step timeline (status, duration, event and tool chips, one line per step), step counter and progress bar, the live browser (`LiveBrowser`) while capture runs, then the final screenshot with its capture time, "Sources found" (filled in step by step from the compact lists the workflow keeps on each step), Cancel, and clear failed and cancelled states. A finished run redirects to its verdict.
+- **Result page, minimal** (`/investigate/[id]/verdict`): banner with concern and confidence, summary, signals each linking to its source, sources with retrieval times, guidance, what could not be checked. **Phase 21 builds the full verdict page** (evidence grid, map, share, export, report).
+- Fixes found while testing: a community report is now one source however it was matched; and cancelling at the instant the workflow starts could be overwritten by the start (now an atomic move from QUEUED to RUNNING).
+- Not built: "Save draft" from the design (the plan has no drafts); the sidebar usage card still shows demo numbers until Phase 28.
 
 **Done when:** submitting a link shows steps ticking live and ends on the verdict page.
 

@@ -46,3 +46,25 @@ export const captureRunChannel = channel({
     finished: { schema: z.object({ status: z.enum(["COMPLETED", "FAILED"]), at: z.number() }) },
   },
 });
+
+/** One live update of an investigation: a step changed, or the agent did something worth showing. */
+export const investigationUpdateSchema = z.object({
+  /** "step" when a step started or ended, "event" for a timeline line. */
+  kind: z.enum(["step", "event"]),
+  step: z.string(),
+  /** For steps: running, done, skipped or failed. */
+  status: z.string().optional(),
+  type: z.string().optional(),
+  message: z.string().optional(),
+  at: z.number(),
+});
+export type InvestigationUpdate = z.infer<typeof investigationUpdateSchema>;
+
+/** Live progress of one investigation. Subscribers get a token for exactly this investigation. */
+export const investigationRunChannel = channel({
+  name: (investigationId: string) => `investigation-run:${investigationId}`,
+  topics: {
+    update: { schema: investigationUpdateSchema },
+    finished: { schema: z.object({ status: z.enum(["COMPLETED", "FAILED", "CANCELLED"]), at: z.number() }) },
+  },
+});

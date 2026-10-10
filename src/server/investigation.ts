@@ -12,6 +12,7 @@ import {
 } from "@/lib/investigation";
 import prisma from "@/lib/prisma";
 import { isSafePublicUrl } from "@/lib/research-policy";
+import { investigationRunChannel } from "@/inngest/channels";
 import { inngest } from "@/inngest/client";
 import { investigationCancelled, investigationRequested } from "@/inngest/events";
 import type { AgentInput, AgentResult } from "@/server/agent";
@@ -26,7 +27,7 @@ const MAX_INPUT = 2000;
 const INVESTIGATIONS_PER_HOUR = 20;
 const runCode = () => `run_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
-export type StartInput = { inputType: InputType; input: string; sellerStatement?: string | null; options?: Partial<AgentOptions> };
+export type StartInput = { inputType: InputType; input: string; sellerStatement?: string | null; options?: Partial<AgentOptions>; districtId?: string | null; serviceType?: "STAY" | "TAXI" | "GUIDE" | "TOUR" | "OTHER" | null };
 export type StartResult = { ok: true; id: string } | { ok: false; error: string };
 
 export const DEFAULT_RUN_OPTIONS: AgentOptions = { research: true, capture: true, knowledge: true, price: true };
@@ -45,6 +46,8 @@ export async function createInvestigation(userId: string, workspaceId: string, i
       title,
       input: input.input.trim().slice(0, MAX_INPUT),
       sellerStatement: input.sellerStatement?.trim().slice(0, 1500) || null,
+      districtId: input.districtId || null,
+      serviceType: input.serviceType || null,
       runResearch: options.research,
       runCapture: options.capture,
       runKnowledge: options.knowledge,
@@ -103,6 +106,7 @@ export async function cancelInvestigation(userId: string, id: string): Promise<{
   await prisma.workflowRun.updateMany({ where: { investigationId: id, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "CANCELLED", finishedAt: new Date() } });
   await prisma.runStep.updateMany({ where: { run: { investigationId: id }, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "CANCELLED" } });
   await inngest.send(investigationCancelled.create({ investigationId: id })).catch(() => undefined);
+  await announceFinished(id, "CANCELLED");
   return { ok: true };
 }
 
@@ -123,12 +127,17 @@ export type RunRef = {
 export async function loadRunRef(investigationId: string): Promise<RunRef | null> {
   const inv = await prisma.investigation.findUniqueOrThrow({
     where: { id: investigationId },
-    include: { workflowRuns: { orderBy: { createdAt: "desc" }, take: 1, include: { steps: { orderBy: { order: "asc" } } } } },
+    include: { district: { select: { name: true } }, workflowRuns: { orderBy: { createdAt: "desc" }, take: 1, include: { steps: { orderBy: { order: "asc" } } } } },
   });
   if (inv.status === "CANCELLED" || inv.status === "COMPLETED") return null;
   const run = inv.workflowRuns[0];
-  if (inv.status !== "RUNNING") await prisma.investigation.update({ where: { id: inv.id }, data: { status: "RUNNING", startedAt: inv.startedAt ?? new Date() } });
-  if (run.status !== "RUNNING") await prisma.workflowRun.update({ where: { id: run.id }, data: { status: "RUNNING", startedAt: run.startedAt ?? new Date() } });
+  // Only QUEUED moves to RUNNING, atomically: a cancel that lands between the read above and this
+  // write must win, not be overwritten.
+  if (inv.status !== "RUNNING") {
+    const moved = await prisma.investigation.updateMany({ where: { id: inv.id, status: { in: ["QUEUED", "DRAFT"] } }, data: { status: "RUNNING", startedAt: inv.startedAt ?? new Date() } });
+    if (moved.count === 0) return null;
+  }
+  await prisma.workflowRun.updateMany({ where: { id: run.id, status: { in: ["QUEUED", "RETRYING"] } }, data: { status: "RUNNING", startedAt: run.startedAt ?? new Date() } });
   return {
     investigationId: inv.id,
     runId: run.id,
@@ -140,6 +149,7 @@ export async function loadRunRef(investigationId: string): Promise<RunRef | null
       input: inv.input,
       sellerStatement: inv.sellerStatement,
       options: { research: inv.runResearch, capture: inv.runCapture, knowledge: inv.runKnowledge, price: inv.runPrice },
+      context: { district: inv.district?.name ?? null, service: inv.serviceType },
     },
     stepIds: Object.fromEntries(run.steps.map((s) => [s.key, s.id])) as Record<InvestigationStepKey, string>,
     startedAt: (inv.startedAt ?? inv.createdAt).getTime(),
@@ -148,9 +158,23 @@ export async function loadRunRef(investigationId: string): Promise<RunRef | null
 
 // ───────────────────────── Recording progress ─────────────────────────
 
-/** Add a line to the run's timeline, under a step. */
+/** Live updates are a nicety: a message that cannot be sent never fails the run (the page re-reads the database). */
+async function publishLive(task: () => Promise<unknown>) {
+  try {
+    await task();
+  } catch (err) {
+    console.warn("investigation realtime publish failed", err instanceof Error ? err.message : err);
+  }
+}
+
+/** Tell anyone watching that the run has ended. */
+export const announceFinished = (investigationId: string, status: "COMPLETED" | "FAILED" | "CANCELLED") =>
+  publishLive(() => inngest.realtime.publish(investigationRunChannel(investigationId).finished, { status, at: Date.now() }));
+
+/** Add a line to the run's timeline, under a step, and push it to anyone watching. */
 export async function note(ref: RunRef, key: InvestigationStepKey, type: string, message: string, data?: Prisma.InputJsonValue) {
   await prisma.runEvent.create({ data: { runId: ref.runId, stepId: ref.stepIds[key], type, message, data } });
+  await publishLive(() => inngest.realtime.publish(investigationRunChannel(ref.investigationId).update, { kind: "event", step: key, type, message, at: Date.now() }));
 }
 
 export async function beginStep(ref: RunRef, key: InvestigationStepKey) {
@@ -160,6 +184,7 @@ export async function beginStep(ref: RunRef, key: InvestigationStepKey) {
     // A step that starts again after a failure is a retry.
     data: { status: "RUNNING", startedAt: new Date(), finishedAt: null, error: null, ...(step.status === "RUNNING" ? { attempt: { increment: 1 } } : {}) },
   });
+  await publishLive(() => inngest.realtime.publish(investigationRunChannel(ref.investigationId).update, { kind: "step", step: key, status: "running", at: Date.now() }));
 }
 
 export async function finishStep(ref: RunRef, key: InvestigationStepKey, status: Extract<RunStatus, "COMPLETED" | "SKIPPED" | "FAILED">, opts: { output?: Prisma.InputJsonValue; error?: string; startedAt?: number } = {}) {
@@ -173,6 +198,7 @@ export async function finishStep(ref: RunRef, key: InvestigationStepKey, status:
     prisma.workflowRun.update({ where: { id: ref.runId }, data: { stepsDone: done } }),
     prisma.investigation.update({ where: { id: ref.investigationId }, data: { currentStep: done } }),
   ]);
+  await publishLive(() => inngest.realtime.publish(investigationRunChannel(ref.investigationId).update, { kind: "step", step: key, status: status === "COMPLETED" ? "done" : status.toLowerCase(), at: Date.now() }));
 }
 
 /** Has the traveller stopped this run? Checked at the start of each step. */
@@ -252,6 +278,7 @@ export async function completeInvestigation(ref: RunRef, verdictSummary: string,
     await tx.workflowRun.update({ where: { id: ref.runId }, data: { status: "COMPLETED", finishedAt: now, durationMs } });
     await tx.investigation.update({ where: { id: ref.investigationId }, data: { status: "COMPLETED", completedAt: now, durationMs, error: null } });
   });
+  await announceFinished(ref.investigationId, "COMPLETED");
 }
 
 /** The run could not finish: record why, once, and tell the traveller. */
@@ -263,6 +290,7 @@ export async function failInvestigation(investigationId: string, message: string
   await prisma.workflowRun.updateMany({ where: { investigationId, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "FAILED", finishedAt: now, error: message.slice(0, 300) } });
   await prisma.runStep.updateMany({ where: { run: { investigationId }, status: "RUNNING" }, data: { status: "FAILED", finishedAt: now } });
   await prisma.runStep.updateMany({ where: { run: { investigationId }, status: "QUEUED" }, data: { status: "SKIPPED" } });
+  await announceFinished(investigationId, "FAILED");
   if (inv.status !== "FAILED") {
     await prisma.notification.create({ data: { userId: inv.userId, type: "run_failed", title: `Check could not finish: ${inv.title}`, body: "Something went wrong. You can try again.", href: `/investigate/${investigationId}` } });
   }
