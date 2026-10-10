@@ -1,9 +1,11 @@
 import { Prisma, type RunStatus } from "@/generated/prisma/client";
+import { randomBytes } from "node:crypto";
 import type { Identifiers } from "@/lib/identifiers";
 import {
   INVESTIGATION_METRIC,
   INVESTIGATION_STEPS,
   investigationTitle,
+  normalizeInput,
   maskPhone,
   maskUpi,
   usagePeriodStart,
@@ -35,7 +37,8 @@ export const DEFAULT_RUN_OPTIONS: AgentOptions = { research: true, capture: true
 /** Create the investigation, its run and its six steps, not yet started. */
 export async function createInvestigation(userId: string, workspaceId: string, input: StartInput): Promise<string> {
   const options = { ...DEFAULT_RUN_OPTIONS, ...input.options };
-  const title = investigationTitle(input.inputType, input.input);
+  const normalized = normalizeInput(input.inputType, input.input);
+  const title = investigationTitle(input.inputType, normalized);
   const startedAt = new Date();
   const inv = await prisma.investigation.create({
     data: {
@@ -44,7 +47,7 @@ export async function createInvestigation(userId: string, workspaceId: string, i
       kind: "BOOKING",
       inputType: input.inputType,
       title,
-      input: input.input.trim().slice(0, MAX_INPUT),
+      input: normalized.slice(0, MAX_INPUT),
       sellerStatement: input.sellerStatement?.trim().slice(0, 1500) || null,
       districtId: input.districtId || null,
       serviceType: input.serviceType || null,
@@ -108,6 +111,20 @@ export async function cancelInvestigation(userId: string, id: string): Promise<{
   await inngest.send(investigationCancelled.create({ investigationId: id })).catch(() => undefined);
   await announceFinished(id, "CANCELLED");
   return { ok: true };
+}
+
+/**
+ * Turn the public link on or off. Only the owner, only for a finished investigation. Turning it
+ * off discards the token, so an old link never works again; turning it on makes a new one.
+ */
+export async function setSharing(userId: string, id: string, enabled: boolean): Promise<{ ok: true; token: string | null } | { ok: false; error: string }> {
+  const inv = await prisma.investigation.findFirst({ where: { id, userId, deletedAt: null }, select: { status: true, shareToken: true, isPublic: true } });
+  if (!inv) return { ok: false, error: "Not found." };
+  if (inv.status !== "COMPLETED") return { ok: false, error: "Only a finished check can be shared." };
+  if (enabled && inv.isPublic && inv.shareToken) return { ok: true, token: inv.shareToken };
+  const token = enabled ? randomBytes(18).toString("base64url") : null;
+  await prisma.investigation.update({ where: { id }, data: { isPublic: enabled, shareToken: token } });
+  return { ok: true, token };
 }
 
 // ───────────────────────── Loading a run for the workflow ─────────────────────────

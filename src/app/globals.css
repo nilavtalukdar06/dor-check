@@ -187,3 +187,27 @@
     @apply font-sans;
   }
 }
+/* Export as PDF uses the browser's print dialog: leave out the app chrome and keep cards whole. */
+@media print {
+  [data-slot="sidebar"],
+  [data-slot="sidebar-gap"],
+  [data-slot="sidebar-container"],
+  [data-slot="sidebar-trigger"],
+  body header,
+  body nav.fixed {
+    display: none !important;
+  }
+  [data-slot="sidebar-inset"],
+  main {
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+  section,
+  li {
+    break-inside: avoid;
+  }
+  body {
+    background: #fff !important;
+  }
+}

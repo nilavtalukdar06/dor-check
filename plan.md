@@ -73,7 +73,8 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 18 AI SDK agent and tools | Done: `runInvestigationAgent` (tools, evidence ledger, rule-checked typed verdict), saved as `InvestigationResult`, every tool call recorded |
 | 19 Investigation workflow | Done: `run-investigation` Inngest function, six recorded steps, timeline events, results/sources/matches/usage/notification saved, cancel |
 | 20 Investigate form and live run screen | Done: `/investigate` form (usage limit enforced), `/investigate/[id]` live run with realtime timeline, live browser preview and sources, cancel; minimal result page at `/investigate/[id]/verdict` |
-| 21 onwards | Open |
+| 21 Verdict page | Done: banner, why flagged, evidence, sources, guidance, map, ask dock, export (print), share link, Report this link |
+| 22 onwards | Open |
 
 Decisions that override the original text below:
 
@@ -631,6 +632,14 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 4. Guidance always includes: don't pay in advance to personal accounts, call 1930, cybercrime.gov.in.
 5. "Report this" pre-fills a report with the URL and evidence.
 6. Share link only for the owner unless they toggle public.
+
+**Built (differs from the text above):**
+- **Page** (`/investigate/[id]/verdict`, owner only): header with Export, Share and Report this; the banner (colour follows the verdict, always with concern, confidence and "not a legal finding"); **Why this was flagged** (strongest first, each with its strength and the numbers of the sources behind it, which jump to the sources list); **Evidence captured** (cards that open the vault viewer); **Sources** (numbered, with when each was retrieved; a web address is a safe external link); **What to do now**; a **map** (the matched business or the district, plus where matching reports are); what could not be checked; and an **Ask about this result** dock.
+- **Guidance always carries the baseline**: never send an advance or deposit to a personal account or personal UPI id, and call 1930 / report at cybercrime.gov.in (`withBaselineGuidance`, applied when the verdict is written and again when an older saved result is shown).
+- **Share** (`/share/[token]`, public, read only): off by default; the owner turns it on in the Share menu and gets an unguessable link; turning it off discards the token, so the old link dies and a new one is a different link. The public page shows the verdict, signals, sources and guidance only: never the traveller's message, their screenshots, identifiers or any app chrome; it asks search engines not to index it. Only the owner can change sharing.
+- **Export** is the browser's print dialog with a print stylesheet (no sidebar, top bar or buttons): Save as PDF. No PDF library.
+- **Report this** links to `/reports/new?investigation=<id>`; **the report form is Phase 22** (the link 404s until then). **Read aloud** is Phase 25 and is not shown. **Ask about this result** hands the question and the investigation to `/assistant?investigation=&q=` until Phase 24 builds the chat.
+- **Fixed:** a link typed or pasted without `https://` (for example `www.makemytrip.com/...`) was not recognised as a link, so the capture step was skipped ("There is no link to open"). Link input is now stored with `https://`.
 
 **Done when:** the demo suspicious URL shows all sections with real data.
 

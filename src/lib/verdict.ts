@@ -174,11 +174,9 @@ export function finalizeVerdict(raw: ModelVerdict, ledger: EvidenceLedger, unche
   let summary = clean(raw.summary, 700);
   if (!/not a legal finding/i.test(summary)) summary = `${summary.replace(/[\s.]+$/, "")}. ${DISCLAIMER}`;
 
-  const guidance = raw.guidance.map((g) => clean(g, 220)).filter(Boolean).slice(0, 6);
-  if (guidance.length === 0) guidance.push("Do not pay in advance until you have checked the seller by another route, such as the official tourism office.");
-  if ((concern === "HIGH" || verdict === "SUSPICIOUS") && !guidance.some((g) => /\b1930\b/.test(g))) {
-    guidance.push("If you have already paid, call the cybercrime helpline 1930 right away.");
-  }
+  const own = raw.guidance.map((g) => clean(g, 220)).filter(Boolean).slice(0, 5);
+  if (own.length === 0) own.push("Check the seller by another route, such as the official tourism office, before you pay anything.");
+  const guidance = withBaselineGuidance(own);
 
   const limits = [...new Set([...(raw.limitations.trim() ? [clean(raw.limitations, 300)] : []), ...unchecked])];
 
@@ -195,6 +193,26 @@ export function finalizeVerdict(raw: ModelVerdict, ledger: EvidenceLedger, unche
     },
     adjustments,
   };
+}
+
+const ADVANCE_WARNING = "Do not send an advance or deposit to a personal account or personal UPI id.";
+const HELPLINE_LINE = "If you have already paid, call the cybercrime helpline 1930 right away and report it at cybercrime.gov.in.";
+
+/**
+ * Guidance every verdict carries, whatever the model wrote: never pay an advance to a personal
+ * account, and where to turn if you have paid (1930 and cybercrime.gov.in). Missing pieces are
+ * added; what the model wrote stays, in order, after the safety line.
+ */
+export function withBaselineGuidance(guidance: readonly string[]): string[] {
+  const out = guidance.map((g) => g.trim()).filter(Boolean);
+  const has = (re: RegExp) => out.some((g) => re.test(g));
+  if (!has(/\b(advance|deposit)\b[^.]*\bpersonal\b|\bpersonal\b[^.]*\b(advance|deposit|account|upi)\b/i)) out.unshift(ADVANCE_WARNING);
+  const has1930 = has(/\b1930\b/);
+  const hasPortal = has(/cybercrime\.gov\.in/i);
+  if (!has1930 && !hasPortal) out.push(HELPLINE_LINE);
+  else if (!has1930) out.push("Call the cybercrime helpline 1930 right away if you have paid.");
+  else if (!hasPortal) out.push("Report online cybercrime at cybercrime.gov.in.");
+  return out;
 }
 
 /** The result when the model could not produce an answer at all: honest, and still useful. */

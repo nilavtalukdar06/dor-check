@@ -93,3 +93,13 @@ export function compactSources(sources: readonly { kind: string; title: string; 
     .slice(0, limit)
     .map((s) => ({ kind: s.kind, title: s.title.slice(0, 120), label: s.label, url: s.url }));
 }
+
+/**
+ * What is stored as the input. A pasted link without "https://" (for example "www.site.com/x")
+ * gets one, so every later step treats it as a link: it can be opened, captured and matched.
+ */
+export function normalizeInput(inputType: InputType, input: string): string {
+  const text = input.trim();
+  if (inputType !== "LINK" || /^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return text;
+  return `https://${text.split(/\s+/)[0]}`;
+}

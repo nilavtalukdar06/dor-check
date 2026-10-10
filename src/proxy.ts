@@ -6,6 +6,8 @@ const PUBLIC_PREFIXES = [
   "/sign-in",
   "/sign-up",
   "/offline",
+  // A verdict the owner chose to share: read-only, found by an unguessable token.
+  "/share",
   "/dev",
   "/api/inngest",
   "/api/webhooks",

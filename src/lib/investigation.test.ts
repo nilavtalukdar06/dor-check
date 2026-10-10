@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractIdentifiers } from "./identifiers";
-import { capturableUrl, compactSources, describeRequest, describeSources, INVESTIGATION_STEPS, investigationTitle, maskPhone, maskUpi, usagePeriodStart } from "./investigation";
+import { capturableUrl, compactSources, normalizeInput, describeRequest, describeSources, INVESTIGATION_STEPS, investigationTitle, maskPhone, maskUpi, usagePeriodStart } from "./investigation";
 
 describe("steps", () => {
   it("are the six from the plan, in order, with unique keys", () => {
@@ -61,5 +61,17 @@ describe("compactSources", () => {
   });
   it("shortens long titles", () => {
     expect(compactSources([src("REPORT", "x".repeat(300))])[0].title).toHaveLength(120);
+  });
+});
+
+describe("normalizeInput", () => {
+  it("gives a pasted link without a scheme one, so it can be opened and captured", () => {
+    expect(normalizeInput("LINK", " www.makemytrip.com/hotels/hotel-details/?hotelId=1 ")).toBe("https://www.makemytrip.com/hotels/hotel-details/?hotelId=1");
+    expect(normalizeInput("LINK", "http://seller.example/x")).toBe("http://seller.example/x");
+    expect(capturableUrl(extractIdentifiers(normalizeInput("LINK", "www.makemytrip.com/hotels/x")))).toBe("https://www.makemytrip.com/hotels/x");
+  });
+  it("leaves other kinds of input alone", () => {
+    expect(normalizeInput("MESSAGE", "  hello there ")).toBe("hello there");
+    expect(normalizeInput("BUSINESS_NAME", "Hotel X")).toBe("Hotel X");
   });
 });

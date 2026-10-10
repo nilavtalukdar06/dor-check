@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EvidenceLedger } from "./evidence-ledger";
-import { buildDossier, DISCLAIMER, fallbackVerdict, finalizeVerdict, softenAccusations, type ModelVerdict } from "./verdict";
+import { buildDossier, DISCLAIMER, fallbackVerdict, finalizeVerdict, softenAccusations, withBaselineGuidance, type ModelVerdict } from "./verdict";
 
 const ledger = () => {
   const l = new EvidenceLedger(() => new Date("2026-10-10T10:00:00Z"));
@@ -102,12 +102,20 @@ describe("finalizeVerdict: wording and guidance", () => {
     expect(out.signals[0].detail).not.toMatch(/criminals|is fake/i);
     expect(out.summary).toMatch(/risk signals/);
   });
-  it("adds a default step and the 1930 helpline when concern is high", () => {
+  it("always carries the baseline guidance: no advance to personal accounts, 1930, cybercrime.gov.in", () => {
+    for (const concern of ["HIGH", "LOW"] as const) {
+      const out = finalizeVerdict({ ...base, concern, verdict: concern === "HIGH" ? "SUSPICIOUS" : "NO_MATCH", signals: [{ kind: "POSITIVE", title: "p", detail: "d", strength: "WEAK", sourceIds: ["S4", "S6"] }, ...(concern === "HIGH" ? [base.signals[0]] : [])], guidance: ["Check the listing."] }, ledger()).verdict;
+      const all = out.guidance.join(" ");
+      expect(out.guidance[0]).toMatch(/advance or deposit to a personal account/i);
+      expect(all).toMatch(/\b1930\b/);
+      expect(all).toMatch(/cybercrime\.gov\.in/);
+      expect(out.guidance).toContain("Check the listing.");
+    }
+  });
+  it("adds the baseline when the model gave no guidance at all", () => {
     const out = finalizeVerdict({ ...base, guidance: [] }, ledger()).verdict;
-    expect(out.guidance[0]).toMatch(/Do not pay in advance/);
-    expect(out.guidance.some((g) => /1930/.test(g))).toBe(true);
-    const calm = finalizeVerdict({ ...base, verdict: "NO_MATCH", concern: "LOW", signals: [{ kind: "POSITIVE", title: "p", detail: "d", strength: "WEAK", sourceIds: ["S4", "S6"] }], guidance: ["Check the listing."] }, ledger()).verdict;
-    expect(calm.guidance.some((g) => /1930/.test(g))).toBe(false);
+    expect(out.guidance.length).toBeGreaterThanOrEqual(3);
+    expect(out.guidance[0]).toMatch(/advance or deposit/i);
   });
   it("merges what could not be checked into limitations", () => {
     const out = finalizeVerdict({ ...base, limitations: "No phone number was given." }, ledger(), ["Live page capture was switched off."]).verdict;
@@ -118,7 +126,7 @@ describe("finalizeVerdict: wording and guidance", () => {
     const many = Array.from({ length: 12 }, (_, i) => ({ kind: "RISK" as const, title: `s${i}`, detail: "d", strength: "WEAK" as const, sourceIds: ["S1"] }));
     const out = finalizeVerdict({ ...base, signals: many, guidance: Array.from({ length: 10 }, (_, i) => `g${i}`) }, ledger()).verdict;
     expect(out.signals).toHaveLength(8);
-    expect(out.guidance.length).toBeLessThanOrEqual(7); // 6 + the helpline
+    expect(out.guidance.length).toBeLessThanOrEqual(8); // 5 of the model's + the baseline
   });
 });
 
@@ -193,5 +201,17 @@ describe("EvidenceLedger", () => {
     l.add({ kind: "WEB_PAGE", title: "ok", via: "firecrawl" });
     l.add({ kind: "WEB_PAGE", title: "gone", via: "firecrawl", unavailable: true });
     expect(l.usable().map((s) => s.title)).toEqual(["ok"]);
+  });
+});
+
+describe("withBaselineGuidance", () => {
+  it("leaves complete guidance alone, in order", () => {
+    const g = ["Never pay an advance to a personal UPI id.", "Call 1930 if you paid.", "Report at cybercrime.gov.in."];
+    expect(withBaselineGuidance(g)).toEqual(g);
+  });
+  it("adds only what is missing", () => {
+    const out = withBaselineGuidance(["Do not pay an advance to a personal account.", "Report at cybercrime.gov.in."]);
+    expect(out).toHaveLength(3);
+    expect(out[2]).toMatch(/1930/);
   });
 });

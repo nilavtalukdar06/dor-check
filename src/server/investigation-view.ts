@@ -2,6 +2,8 @@ import "server-only";
 
 import type { StepStatus } from "@/components/investigation/step-timeline";
 import { INVESTIGATION_STEPS, type FoundSource } from "@/lib/investigation";
+import { KIND_COLOR } from "@/lib/map";
+import { withBaselineGuidance } from "@/lib/verdict";
 import prisma from "@/lib/prisma";
 import { hostOf } from "@/lib/research-policy";
 import { keyFromRef, signedUrl, storageConfigured } from "@/server/storage";
@@ -123,8 +125,20 @@ export async function getInvestigationView(userId: string, id: string): Promise<
 
 // ───────────────────────── The result ─────────────────────────
 
-export type VerdictView = {
+export type VerdictSignal = {
   id: string;
+  kind: "RISK" | "CAUTION" | "POSITIVE";
+  strength: "STRONG" | "MODERATE" | "WEAK" | "NEUTRAL";
+  title: string;
+  detail: string;
+  /** Numbers of the sources that support it (the position in `sources`, from 1). */
+  sourceNos: number[];
+};
+
+export type VerdictSource = { no: number; id: string; kind: string; title: string; label: string | null; url: string | null; retrievedAt: Date };
+
+/** What the verdict says, without anything private: safe to show to anyone the owner shares it with. */
+export type VerdictCore = {
   title: string;
   verdict: "VERIFIED_MATCH" | "SUSPICIOUS" | "NO_MATCH" | "INCONCLUSIVE";
   concern: "LOW" | "MEDIUM" | "HIGH";
@@ -133,29 +147,118 @@ export type VerdictView = {
   guidance: string[];
   limitations: string | null;
   completedAt: Date | null;
-  signals: { id: string; kind: "RISK" | "CAUTION" | "POSITIVE"; strength: "STRONG" | "MODERATE" | "WEAK" | "NEUTRAL"; title: string; detail: string; sourceId: string | null }[];
-  sources: { id: string; kind: string; title: string; label: string | null; url: string | null; retrievedAt: Date }[];
+  signals: VerdictSignal[];
+  sources: VerdictSource[];
 };
 
-/** A finished investigation's verdict, only for its owner. Null until it has one. */
-export async function getVerdictView(userId: string, id: string): Promise<VerdictView | null> {
-  const inv = await prisma.investigation.findFirst({
-    where: { id, userId, deletedAt: null, result: { isNot: null } },
-    include: { result: { include: { signals: { orderBy: { order: "asc" } } } }, sources: { orderBy: { retrievedAt: "asc" } } },
-  });
-  if (!inv?.result) return null;
-  const strength = { STRONG: 0, MODERATE: 1, WEAK: 2, NEUTRAL: 3 } as const;
+export type VerdictView = VerdictCore & {
+  id: string;
+  inputType: string;
+  /** The link, name, message or contact the traveller entered. Private. */
+  input: string;
+  createdAt: Date;
+  districtName: string | null;
+  evidence: { id: string; kind: "SCREENSHOT" | "EXTRACT" | "UPLOAD" | "AUDIO" | "DOCUMENT"; title: string; capturedBy: string; capturedAt: Date; thumbnail: string | null }[];
+  map: { markers: { lat: number; lng: number; color: string; label?: string }[]; caption: string | null } | null;
+  share: { isPublic: boolean; token: string | null };
+  reportMatches: number;
+};
+
+const STRENGTH_ORDER = { STRONG: 0, MODERATE: 1, WEAK: 2, NEUTRAL: 3 } as const;
+
+type RawOutput = { signals?: { sourceIds?: string[] }[]; ledgerToSource?: Record<string, string> } | null;
+
+/** Turn the saved result into what the page shows: signals with their sources, strongest first. */
+function buildCore(
+  inv: {
+    title: string;
+    completedAt: Date | null;
+    result: { verdict: VerdictCore["verdict"]; concern: VerdictCore["concern"]; confidence: VerdictCore["confidence"]; summary: string; guidance: string[]; limitations: string | null; rawOutput: unknown; signals: { id: string; order: number; kind: VerdictSignal["kind"]; strength: VerdictSignal["strength"]; title: string; detail: string; sourceId: string | null }[] };
+    sources: { id: string; kind: string; title: string; label: string | null; url: string | null; retrievedAt: Date }[];
+  },
+  opts: { hidePrivateSources: boolean },
+): VerdictCore {
+  const raw = inv.result.rawOutput as RawOutput;
+  // The traveller's own message is a citable source for them, but never shown to anyone else.
+  const rows = inv.sources.filter((s) => !(opts.hidePrivateSources && s.kind === "USER"));
+  const no = new Map(rows.map((s, i) => [s.id, i + 1]));
+  const signals = [...inv.result.signals]
+    .sort((a, b) => a.order - b.order)
+    .map((s, i): VerdictSignal => {
+      const ledger = raw?.signals?.[i]?.sourceIds ?? [];
+      const rowIds = ledger.map((l) => raw?.ledgerToSource?.[l]).filter((x): x is string => !!x);
+      const ids = rowIds.length ? rowIds : s.sourceId ? [s.sourceId] : [];
+      return { id: s.id, kind: s.kind, strength: s.strength, title: s.title, detail: s.detail, sourceNos: [...new Set(ids.map((x) => no.get(x)).filter((n): n is number => !!n))] };
+    })
+    .sort((a, b) => STRENGTH_ORDER[a.strength] - STRENGTH_ORDER[b.strength]);
   return {
-    id: inv.id,
     title: inv.title,
     verdict: inv.result.verdict,
     concern: inv.result.concern,
     confidence: inv.result.confidence,
     summary: inv.result.summary,
-    guidance: inv.result.guidance,
+    // Results saved before the baseline rule existed get it too.
+    guidance: withBaselineGuidance(inv.result.guidance),
     limitations: inv.result.limitations,
     completedAt: inv.completedAt,
-    signals: [...inv.result.signals].sort((a, b) => strength[a.strength] - strength[b.strength]).map((s) => ({ id: s.id, kind: s.kind, strength: s.strength, title: s.title, detail: s.detail, sourceId: s.sourceId })),
-    sources: inv.sources.map((s) => ({ id: s.id, kind: s.kind, title: s.title, label: s.label, url: s.url, retrievedAt: s.retrievedAt })),
+    signals,
+    sources: rows.map((s, i) => ({ no: i + 1, id: s.id, kind: s.kind, title: s.title, label: s.label, url: s.url, retrievedAt: s.retrievedAt })),
   };
+}
+
+const EVIDENCE_BY: Record<string, string> = { browserbase: "Browserbase", firecrawl: "Firecrawl", user: "You", sarvam: "Sarvam" };
+
+/** A finished investigation's verdict, only for its owner. Null until it has one. */
+export async function getVerdictView(userId: string, id: string): Promise<VerdictView | null> {
+  const inv = await prisma.investigation.findFirst({
+    where: { id, userId, deletedAt: null, result: { isNot: null } },
+    include: {
+      result: { include: { signals: true } },
+      sources: { orderBy: { retrievedAt: "asc" } },
+      district: { select: { name: true, lat: true, lng: true } },
+      matchedProperty: { select: { name: true, lat: true, lng: true } },
+      reportMatches: { include: { report: { select: { reference: true, lat: true, lng: true } } }, take: 8 },
+      evidence: { where: { deletedAt: null }, orderBy: { capturedAt: "asc" } },
+    },
+  });
+  if (!inv?.result) return null;
+
+  const evidence = await Promise.all(
+    inv.evidence.map(async (e) => {
+      const key = keyFromRef(e.storageUrl);
+      const thumb = e.mimeType.startsWith("image/") && key && storageConfigured() ? await signedUrl(key, 3600).catch(() => null) : null;
+      return { id: e.id, kind: e.kind, title: e.title, capturedBy: EVIDENCE_BY[e.capturedBy] ?? e.capturedBy, capturedAt: e.capturedAt, thumbnail: thumb };
+    }),
+  );
+
+  // Map: the matched business if there is one, else the district; plus where matching reports are.
+  const markers: NonNullable<VerdictView["map"]>["markers"] = [];
+  const prop = inv.matchedProperty;
+  if (prop?.lat != null && prop.lng != null) markers.push({ lat: prop.lat, lng: prop.lng, color: KIND_COLOR.verified, label: prop.name });
+  else if (inv.district) markers.push({ lat: inv.district.lat, lng: inv.district.lng, color: KIND_COLOR.listed, label: inv.district.name });
+  for (const m of inv.reportMatches) if (m.report.lat != null && m.report.lng != null) markers.push({ lat: m.report.lat, lng: m.report.lng, color: KIND_COLOR.scam, label: m.report.reference });
+
+  return {
+    ...buildCore({ ...inv, result: inv.result }, { hidePrivateSources: false }),
+    id: inv.id,
+    inputType: inv.inputType,
+    input: inv.input,
+    createdAt: inv.createdAt,
+    districtName: inv.district?.name ?? null,
+    evidence,
+    map: markers.length ? { markers, caption: inv.district?.name ?? null } : null,
+    share: { isPublic: inv.isPublic, token: inv.shareToken },
+    reportMatches: inv.reportMatches.length,
+  };
+}
+
+/** The verdict behind a share link: only if the owner switched sharing on. Nothing private comes with it. */
+export async function getSharedVerdict(token: string): Promise<VerdictCore | null> {
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return null;
+  const inv = await prisma.investigation.findFirst({
+    where: { shareToken: token, isPublic: true, deletedAt: null, status: "COMPLETED", result: { isNot: null } },
+    include: { result: { include: { signals: true } }, sources: { orderBy: { retrievedAt: "asc" } } },
+  });
+  if (!inv?.result) return null;
+  return buildCore({ ...inv, result: inv.result }, { hidePrivateSources: true });
 }
