@@ -1,3 +1,17 @@
+// Travel Trap Detector: complete data model.
+//
+// Design rules (so we migrate once, not per phase):
+//  - Enums only for closed state machines the code switches on (status, verdict, band).
+//    Open catalogues (language codes, voice names, vehicle types, event names, tool names,
+//    notification types, usage metrics, workflow types) are plain strings validated with
+//    zod in the app, so adding one never needs a migration.
+//  - Prices are whole rupees (Int, "Inr" suffix). Bytes are Int, except usage totals (BigInt).
+//  - `createdById` / `verifiedById` style audit columns are plain ids without a relation, so
+//    deleting a Clerk user never blocks or cascades into shared, moderated content.
+//  - Reporter / author relations use SetNull: content outlives its author's account.
+//  - Everything private to a user (investigations, evidence, chats, usage) cascades on delete.
+//  - `isDemo` marks synthetic seed rows so the demo banner and cleanup stay trivial.
+
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -5,4 +19,1483 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum UserRole {
+  TRAVELLER
+  MODERATOR
+  ADMIN
+}
+
+enum WorkspaceRole {
+  OWNER
+  MEMBER
+}
+
+enum PlanTier {
+  FREE
+  TRAVELLER
+  GROUP
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  ENDED
+}
+
+enum InvoiceStatus {
+  PAID
+  OPEN
+  FAILED
+  REFUNDED
+  VOID
+}
+
+/// Directory, tariff and report category. UI labels: Stay / Accommodation, Taxi, Guide, Tour.
+enum ServiceType {
+  STAY
+  TAXI
+  GUIDE
+  TOUR
+  OTHER
+}
+
+enum InvestigationKind {
+  BOOKING
+  PRICE
+}
+
+enum InvestigationInputType {
+  LINK
+  BUSINESS_NAME
+  MESSAGE
+  CONTACT
+}
+
+enum InvestigationStatus {
+  DRAFT
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+/// Shared by workflow runs, run steps, tool calls and voice jobs.
+/// "waiting" in the UI is QUEUED; "In progress" is RUNNING.
+enum RunStatus {
+  QUEUED
+  RUNNING
+  RETRYING
+  COMPLETED
+  FAILED
+  CANCELLED
+  SKIPPED
+}
+
+enum Verdict {
+  VERIFIED_MATCH
+  SUSPICIOUS
+  NO_MATCH
+  INCONCLUSIVE
+}
+
+/// Used for concern, confidence and report priority.
+enum Level {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum SignalKind {
+  RISK
+  CAUTION
+  POSITIVE
+}
+
+enum SignalStrength {
+  STRONG
+  MODERATE
+  WEAK
+  NEUTRAL
+}
+
+enum PriceBand {
+  BELOW_RANGE
+  WITHIN_RANGE
+  ABOVE_RANGE
+  WELL_ABOVE_RANGE
+  NO_REFERENCE
+}
+
+enum SourceKind {
+  WEB_PAGE
+  DIRECTORY
+  TARIFF
+  REPORT
+  ADVISORY
+  KNOWLEDGE
+  USER
+}
+
+enum IdentifierKind {
+  URL
+  DOMAIN
+  PHONE
+  UPI
+  EMAIL
+  NAME
+}
+
+enum EvidenceKind {
+  SCREENSHOT
+  EXTRACT
+  UPLOAD
+  AUDIO
+  DOCUMENT
+}
+
+enum ReportStatus {
+  NEW
+  UNDER_REVIEW
+  VERIFIED
+  RESOLVED
+  CLOSED
+  REJECTED
+}
+
+/// Drives map pin colour: SCAM red, FARE_DISPUTE amber.
+enum ReportKind {
+  SCAM
+  FARE_DISPUTE
+  OTHER
+}
+
+enum ReportVisibility {
+  PUBLIC
+  HIDDEN
+}
+
+enum ReportEventType {
+  SUBMITTED
+  AUTO_CHECKED
+  STATUS_CHANGED
+  ASSIGNED
+  FINDING_PUBLISHED
+  FINDING_RETRACTED
+  NOTE
+  HIDDEN
+  RESTORED
+}
+
+enum CommentStatus {
+  VISIBLE
+  FLAGGED
+  REMOVED
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+enum VoiceJobKind {
+  TTS
+  STT
+  TRANSLATE
+}
+
+enum KnowledgeSourceStatus {
+  PENDING
+  SYNCING
+  INDEXED
+  FAILED
+  PAUSED
+}
+
+enum KnowledgeSourceVia {
+  FIRECRAWL
+  UPLOAD
+  INTERNAL
+  MANUAL
+}
+
+// ─────────────────── Users, workspaces, plans, usage ───────────────────
+
+model User {
+  id          String    @id @default(cuid())
+  /// Clerk user id (user_...). Also used as the Stream user id.
+  clerkId     String    @unique
+  email       String?
+  name        String?
+  /// Editable name shown in the app (Settings > Profile). Falls back to `name`.
+  displayName String?
+  imageUrl    String?
+  /// Mirrored from Clerk publicMetadata.role by the webhook.
+  role        UserRole  @default(TRAVELLER)
+  lastSeenAt  DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  preference        UserPreference?
+  ownedWorkspaces   Workspace[]        @relation("WorkspaceOwner")
+  memberships       WorkspaceMember[]
+  subscriptions     Subscription[]
+  invoices          Invoice[]
+  usage             UsageRecord[]
+  investigations    Investigation[]
+  evidence          Evidence[]
+  reports           Report[]           @relation("ReportReporter")
+  assignedReports   Report[]           @relation("ReportAssignee")
+  followedReports   ReportFollow[]
+  findings          OfficialFinding[]
+  comments          Comment[]
+  reportEvents      ReportEvent[]
+  moderationActions ModerationAction[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+  chatThreads       ChatThread[]
+  voiceJobs         VoiceJob[]
+  feedback          Feedback[]
+  workflowRuns      WorkflowRun[]
+
+  @@index([role])
+  @@index([email])
+}
+
+/// Settings screen: language and voice, notifications, privacy; plus read-aloud sliders.
+model UserPreference {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// BCP-47 code, e.g. "en-IN", "hi-IN", "as-IN".
+  language            String    @default("en-IN")
+  defaultVoice        String    @default("meera")
+  speechPace          Float     @default(1.0)
+  speechPitch         Float     @default(0)
+  speechLoudness      Float     @default(1.0)
+  autoReadVerdicts    Boolean   @default(false)
+  notifyRunAlerts     Boolean   @default(true)
+  notifyReportUpdates Boolean   @default(true)
+  notifyModeration    Boolean   @default(true)
+  /// New reports hide the author's name by default.
+  reportsAnonymous    Boolean   @default(true)
+  homeDistrictId      String?
+  homeDistrict        District? @relation(fields: [homeDistrictId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// "My trips". Every user gets a personal workspace; the Group plan adds shared ones.
+model Workspace {
+  id         String   @id @default(cuid())
+  name       String   @default("My trips")
+  ownerId    String
+  owner      User     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  isPersonal Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  members        WorkspaceMember[]
+  invites        WorkspaceInvite[]
+  investigations Investigation[]
+  evidence       Evidence[]
+  chatThreads    ChatThread[]
+  subscriptions  Subscription[]
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, userId])
+  @@index([userId])
+}
+
+model WorkspaceInvite {
+  id          String        @id @default(cuid())
+  workspaceId String
+  email       String
+  role        WorkspaceRole @default(MEMBER)
+  token       String        @unique @default(cuid())
+  invitedById String?
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([email])
+}
+
+/// Plan catalogue (Free, Traveller, Group). Limits live here, not in code. Null = unlimited.
+model Plan {
+  id                     String   @id @default(cuid())
+  tier                   PlanTier @unique
+  name                   String
+  priceInr               Int      @default(0)
+  billingPeriod          String   @default("month")
+  investigationsPerMonth Int?
+  voiceMinutesPerMonth   Int?
+  evidenceStorageMb      Int?
+  features               String[]
+  /// Clerk Billing plan id (cplan_...), when billing is enabled.
+  clerkPlanId            String?  @unique
+  sortOrder              Int      @default(0)
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  subscriptions Subscription[]
+  invoices      Invoice[]
+}
+
+/// No active row means the Free plan.
+model Subscription {
+  id                  String             @id @default(cuid())
+  userId              String
+  user                User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId         String?
+  workspace           Workspace?         @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  planId              String
+  plan                Plan               @relation(fields: [planId], references: [id])
+  status              SubscriptionStatus @default(ACTIVE)
+  clerkSubscriptionId String?            @unique
+  currentPeriodStart  DateTime?
+  currentPeriodEnd    DateTime?
+  cancelAtPeriodEnd   Boolean            @default(false)
+  canceledAt          DateTime?
+  trialEndsAt         DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  invoices Invoice[]
+
+  @@index([userId, status])
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  planId         String?
+  plan           Plan?         @relation(fields: [planId], references: [id], onDelete: SetNull)
+  number         String?
+  periodStart    DateTime?
+  periodEnd      DateTime?
+  amountInr      Int
+  currency       String        @default("INR")
+  status         InvoiceStatus @default(PAID)
+  paidAt         DateTime?
+  hostedUrl      String?
+  clerkPaymentId String?       @unique
+  createdAt      DateTime      @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// Monthly counters. metric: "investigations", "voice_seconds", "evidence_bytes",
+/// "tts_chars", "chat_messages", "reports". periodStart is the first day of the month.
+model UsageRecord {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metric      String
+  periodStart DateTime @db.Date
+  quantity    BigInt   @default(0)
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, metric, periodStart])
+}
+
+/// Fixed-window rate limiting when Upstash is not configured. key e.g. "investigation:<userId>".
+model RateLimitBucket {
+  key         String
+  windowStart DateTime
+  count       Int      @default(0)
+
+  @@id([key, windowStart])
+}
+
+// ─────────────────── Geography, directory, tariffs ───────────────────
+
+model District {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  /// "AS" Assam, "ML" Meghalaya. Open string so other north-east states can be added.
+  stateCode String
+  lat       Float
+  lng       Float
+  aliases   String[]
+
+  places         Place[]
+  properties     Property[]
+  tariffBoards   TariffBoard[]
+  benchmarks     TariffBenchmark[]
+  investigations Investigation[]
+  priceChecks    PriceCheck[]
+  reports        Report[]
+  advisories     Advisory[]
+  documents      KnowledgeDocument[]
+  preferences    UserPreference[]
+
+  @@index([stateCode])
+}
+
+/// Named points used by price checks: airports, stations, bazars, sights, taxi stands.
+model Place {
+  id         String   @id @default(cuid())
+  slug       String   @unique
+  name       String
+  /// "AIRPORT", "RAILWAY", "BUS_STAND", "CITY", "LOCALITY", "SIGHT", "TAXI_STAND".
+  kind       String
+  districtId String
+  district   District @relation(fields: [districtId], references: [id])
+  lat        Float
+  lng        Float
+  aliases    String[]
+  isDemo     Boolean  @default(false)
+
+  tariffBoards     TariffBoard[]
+  originBenchmarks TariffBenchmark[] @relation("BenchmarkOrigin")
+  destBenchmarks   TariffBenchmark[] @relation("BenchmarkDestination")
+  originChecks     PriceCheck[]      @relation("CheckOrigin")
+  destChecks       PriceCheck[]      @relation("CheckDestination")
+
+  @@index([districtId])
+  @@index([name])
+}
+
+/// Registered stays, taxi unions, guides and tours.
+model Property {
+  id                 String      @id @default(cuid())
+  slug               String      @unique
+  name               String
+  type               ServiceType
+  districtId         String
+  district           District    @relation(fields: [districtId], references: [id])
+  description        String?
+  address            String?
+  /// Business domain used to recognise a listing; synthetic data uses .example.
+  domain             String?
+  websiteUrl         String?
+  phone              String?
+  email              String?
+  /// Business UPI handle, never a personal one.
+  businessUpi        String?
+  registrationNumber String?
+  lat                Float?
+  lng                Float?
+  tags               String[]
+  verified           Boolean     @default(false)
+  verifiedAt         DateTime?
+  verifiedById       String?
+  isActive           Boolean     @default(true)
+  isDemo             Boolean     @default(false)
+  createdById        String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  identifiers    PropertyIdentifier[]
+  reports        Report[]
+  investigations Investigation[]
+  documents      KnowledgeDocument[]
+
+  @@index([type, districtId])
+  @@index([verified])
+  @@index([domain])
+  @@index([lat, lng])
+}
+
+/// A normalised URL, domain, phone, UPI id, email or name. Lets us match the same seller
+/// across investigations, reports and the directory.
+model Identifier {
+  id          String         @id @default(cuid())
+  kind        IdentifierKind
+  /// Lower-cased, trimmed, canonical form. Unique per kind.
+  value       String
+  /// As typed or masked for display.
+  display     String
+  /// True for registered businesses; false means a private person (redact in public views).
+  isBusiness  Boolean        @default(false)
+  firstSeenAt DateTime       @default(now())
+
+  properties     PropertyIdentifier[]
+  investigations InvestigationIdentifier[]
+  reports        ReportIdentifier[]
+
+  @@unique([kind, value])
+}
+
+model PropertyIdentifier {
+  propertyId   String
+  identifierId String
+  property     Property   @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  identifier   Identifier @relation(fields: [identifierId], references: [id], onDelete: Cascade)
+
+  @@id([propertyId, identifierId])
+}
+
+/// A physical tariff board (blue pin on the map).
+model TariffBoard {
+  id              String    @id @default(cuid())
+  name            String
+  districtId      String
+  district        District  @relation(fields: [districtId], references: [id])
+  placeId         String?
+  place           Place?    @relation(fields: [placeId], references: [id], onDelete: SetNull)
+  lat             Float
+  lng             Float
+  notes           String?
+  photoEvidenceId String?
+  lastVerifiedAt  DateTime?
+  isActive        Boolean   @default(true)
+  isDemo          Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+
+  benchmarks TariffBenchmark[]
+
+  @@index([districtId])
+  @@index([lat, lng])
+}
+
+/// A fair-price range. routeKey = "origin|destination|vehicle" lower-cased with punctuation
+/// stripped; for stays/guides/tours it is "district|qualifier".
+model TariffBenchmark {
+  id                 String           @id @default(cuid())
+  serviceType        ServiceType
+  routeKey           String
+  originPlaceId      String?
+  originPlace        Place?           @relation("BenchmarkOrigin", fields: [originPlaceId], references: [id], onDelete: SetNull)
+  destinationPlaceId String?
+  destinationPlace   Place?           @relation("BenchmarkDestination", fields: [destinationPlaceId], references: [id], onDelete: SetNull)
+  districtId         String?
+  district           District?        @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  /// "SEDAN", "SUV", "HATCHBACK", "VAN", "AUTO", "SHARED"...
+  vehicle            String?
+  /// Room type, guide duration, tour package.
+  qualifier          String?
+  /// "PER_TRIP", "PER_NIGHT", "PER_DAY", "PER_PERSON".
+  unit               String           @default("PER_TRIP")
+  lowInr             Int
+  highInr            Int
+  distanceKm         Decimal?         @db.Decimal(7, 1)
+  durationMin        Int?
+  via                String?
+  nightSurchargePct  Int?
+  boardId            String?
+  board              TariffBoard?     @relation(fields: [boardId], references: [id], onDelete: SetNull)
+  knowledgeSourceId  String?
+  knowledgeSource    KnowledgeSource? @relation(fields: [knowledgeSourceId], references: [id], onDelete: SetNull)
+  /// "Demo tariff", "Tariff sheet".
+  sourceLabel        String?
+  sourceUrl          String?
+  effectiveOn        DateTime         @db.Date
+  expiresOn          DateTime?        @db.Date
+  isActive           Boolean          @default(true)
+  isDemo             Boolean          @default(false)
+  createdById        String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  priceChecks PriceCheck[]
+  documents   KnowledgeDocument[]
+
+  @@unique([routeKey, effectiveOn])
+  @@index([serviceType, routeKey])
+  @@index([districtId])
+}
+
+// ───────────────────── Investigations and the agent run ─────────────────────
+
+model Investigation {
+  id                String                 @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId            String
+  user              User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind              InvestigationKind      @default(BOOKING)
+  inputType         InvestigationInputType @default(LINK)
+  /// Row label: business name, domain or "Guwahati to Shillong".
+  title             String
+  /// The pasted link, name, message or phone/UPI.
+  input             String
+  districtId        String?
+  district          District?              @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  serviceType       ServiceType?
+  /// "Anything the seller said (optional)".
+  sellerStatement   String?
+  runResearch       Boolean                @default(true)
+  runCapture        Boolean                @default(true)
+  runKnowledge      Boolean                @default(true)
+  runPrice          Boolean                @default(false)
+  reportLanguage    String                 @default("en-IN")
+  status            InvestigationStatus    @default(QUEUED)
+  currentStep       Int                    @default(0)
+  totalSteps        Int                    @default(6)
+  startedAt         DateTime?
+  completedAt       DateTime?
+  durationMs        Int?
+  error             String?
+  matchedPropertyId String?
+  matchedProperty   Property?              @relation(fields: [matchedPropertyId], references: [id], onDelete: SetNull)
+  isPublic          Boolean                @default(false)
+  shareToken        String?                @unique
+  /// "form", "assistant", "report", "example".
+  createdVia        String                 @default("form")
+  isDemo            Boolean                @default(false)
+  deletedAt         DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  result        InvestigationResult?
+  priceCheck    PriceCheck?
+  workflowRuns  WorkflowRun[]
+  sources       Source[]
+  evidence      Evidence[]
+  reportMatches InvestigationReportMatch[]
+  identifiers   InvestigationIdentifier[]
+  chatThreads   ChatThread[]
+  reports       Report[]
+  voiceJobs     VoiceJob[]
+
+  @@index([userId, createdAt])
+  @@index([workspaceId, createdAt])
+  @@index([status])
+}
+
+model InvestigationIdentifier {
+  investigationId String
+  identifierId    String
+  /// "subject", "seller_upi", "seller_phone".
+  role            String?
+  investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  identifier      Identifier    @relation(fields: [identifierId], references: [id], onDelete: Cascade)
+
+  @@id([investigationId, identifierId])
+}
+
+/// One Inngest run. Powers the live screen (investigations) and the Workflow runs admin
+/// screen (every type: investigation, price check, crawl, transcribe...).
+model WorkflowRun {
+  id                String           @id @default(cuid())
+  /// Short human code shown in the UI, e.g. "run_8KQ2M1".
+  runCode           String           @unique
+  /// "investigation", "price_check", "crawl", "transcribe", "report_check", "tts".
+  type              String
+  /// Row subject: domain, route, source name, report reference.
+  subject           String
+  status            RunStatus        @default(QUEUED)
+  inngestRunId      String?          @unique
+  inngestEventId    String?
+  userId            String?
+  user              User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  investigationId   String?
+  investigation     Investigation?   @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  reportId          String?
+  report            Report?          @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  knowledgeSourceId String?
+  knowledgeSource   KnowledgeSource? @relation(fields: [knowledgeSourceId], references: [id], onDelete: SetNull)
+  voiceJobId        String?
+  voiceJob          VoiceJob?        @relation(fields: [voiceJobId], references: [id], onDelete: SetNull)
+  stepsDone         Int              @default(0)
+  stepsTotal        Int              @default(0)
+  attempt           Int              @default(1)
+  maxAttempts       Int              @default(3)
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  durationMs        Int?
+  error             String?
+  createdAt         DateTime         @default(now())
+
+  steps     RunStep[]
+  events    RunEvent[]
+  toolCalls ToolCall[]
+
+  @@index([status, createdAt])
+  @@index([type, createdAt])
+  @@index([investigationId])
+  @@index([createdAt])
+}
+
+model RunStep {
+  id         String      @id @default(cuid())
+  runId      String
+  run        WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  order      Int
+  /// "parse-input", "search-sources", "capture-page", "retrieve-benchmarks", "analyse", "finalise".
+  key        String
+  /// "Understand the request", "Search public sources"...
+  title      String
+  status     RunStatus   @default(QUEUED)
+  attempt    Int         @default(1)
+  startedAt  DateTime?
+  finishedAt DateTime?
+  durationMs Int?
+  error      String?
+  output     Json?
+
+  events    RunEvent[]
+  toolCalls ToolCall[]
+
+  @@unique([runId, order])
+}
+
+/// Append-only event stream. The integer id is the SSE `lastId` cursor.
+model RunEvent {
+  id        Int         @id @default(autoincrement())
+  runId     String
+  run       WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepId    String?
+  step      RunStep?    @relation(fields: [stepId], references: [id], onDelete: SetNull)
+  /// "research_started", "sources_found", "page_captured", "benchmark_calculated", "analysis_completed".
+  type      String
+  message   String?
+  data      Json?
+  createdAt DateTime    @default(now())
+
+  @@index([runId, id])
+  @@index([createdAt])
+}
+
+/// Every agent/assistant tool call: firecrawl.search, browserbase.screenshot, pinecone.query...
+model ToolCall {
+  id            String       @id @default(cuid())
+  runId         String?
+  run           WorkflowRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepId        String?
+  step          RunStep?     @relation(fields: [stepId], references: [id], onDelete: SetNull)
+  chatMessageId String?
+  chatMessage   ChatMessage? @relation(fields: [chatMessageId], references: [id], onDelete: Cascade)
+  name          String
+  input         Json?
+  output        Json?
+  status        RunStatus    @default(COMPLETED)
+  error         String?
+  durationMs    Int?
+  createdAt     DateTime     @default(now())
+
+  @@index([runId])
+  @@index([chatMessageId])
+}
+
+model InvestigationResult {
+  id              String        @id @default(cuid())
+  investigationId String        @unique
+  investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  verdict         Verdict
+  concern         Level
+  confidence      Level
+  /// Always ends with "signal, not a legal finding".
+  summary         String
+  /// "What to do now" items, in order.
+  guidance        String[]
+  /// What the agent could not check.
+  limitations     String?
+  promptVersion   String?
+  modelId         String?
+  inputTokens     Int?
+  outputTokens    Int?
+  rawOutput       Json?
+  createdAt       DateTime      @default(now())
+
+  signals Signal[]
+}
+
+model Signal {
+  id       String              @id @default(cuid())
+  resultId String
+  result   InvestigationResult @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  order    Int                 @default(0)
+  kind     SignalKind
+  title    String
+  detail   String
+  strength SignalStrength
+  sourceId String?
+  source   Source?             @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@index([resultId, order])
+}
+
+/// Every cited source with the time it was retrieved.
+model Source {
+  id                  String             @id @default(cuid())
+  investigationId     String?
+  investigation       Investigation?     @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  reportId            String?
+  report              Report?            @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  knowledgeDocumentId String?
+  knowledgeDocument   KnowledgeDocument? @relation(fields: [knowledgeDocumentId], references: [id], onDelete: SetNull)
+  kind                SourceKind
+  url                 String?
+  title               String
+  /// "community report TTD-7K2M9Q" when there is no URL.
+  label               String?
+  domain              String?
+  snippet             String?
+  excerpt             String?
+  /// "firecrawl", "pinecone", "directory", "report".
+  via                 String
+  retrievedAt         DateTime           @default(now())
+  contentHash         String?
+  httpStatus          Int?
+  /// Fetch failed: shown as "source unavailable", never as evidence.
+  unavailable         Boolean            @default(false)
+  createdAt           DateTime           @default(now())
+
+  signals Signal[]
+
+  @@index([investigationId])
+}
+
+model PriceCheck {
+  id                  String           @id @default(cuid())
+  investigationId     String           @unique
+  investigation       Investigation    @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  serviceType         ServiceType
+  originText          String
+  destinationText     String?
+  originPlaceId       String?
+  originPlace         Place?           @relation("CheckOrigin", fields: [originPlaceId], references: [id], onDelete: SetNull)
+  destinationPlaceId  String?
+  destinationPlace    Place?           @relation("CheckDestination", fields: [destinationPlaceId], references: [id], onDelete: SetNull)
+  districtId          String?
+  district            District?        @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  vehicle             String?
+  qualifier           String?
+  quotedInr           Int
+  band                PriceBand
+  /// Snapshot of the benchmark at check time.
+  lowInr              Int?
+  highInr             Int?
+  percentOverHigh     Decimal?         @db.Decimal(7, 2)
+  benchmarkId         String?
+  benchmark           TariffBenchmark? @relation(fields: [benchmarkId], references: [id], onDelete: SetNull)
+  /// "Demo tariff, updated 7 Oct 2026".
+  benchmarkLabel      String?
+  distanceKm          Decimal?         @db.Decimal(7, 1)
+  durationMin         Int?
+  /// True when distance came from haversine instead of routing.
+  distanceIsApprox    Boolean          @default(false)
+  routeVia            String?
+  routeGeometry       Json?
+  communityReports    Int              @default(0)
+  communityWindowDays Int              @default(90)
+  explanation         String?
+  createdAt           DateTime         @default(now())
+}
+
+model InvestigationReportMatch {
+  id              String        @id @default(cuid())
+  investigationId String
+  investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  reportId        String
+  report          Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  /// "same_url", "same_upi", "same_phone", "same_domain", "similar_text".
+  reason          String
+  score           Float?
+
+  @@unique([investigationId, reportId])
+}
+
+// ─────────────────────────────── Evidence ───────────────────────────────
+
+model Evidence {
+  id               String         @id @default(cuid())
+  ownerId          String
+  owner            User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  workspaceId      String?
+  workspace        Workspace?     @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  investigationId  String?
+  investigation    Investigation? @relation(fields: [investigationId], references: [id], onDelete: SetNull)
+  kind             EvidenceKind
+  /// "Listing page", "Payment step", "Voice note".
+  title            String
+  /// Hotel name, report reference or route.
+  subject          String?
+  /// Page the capture came from.
+  url              String?
+  storageKey       String
+  storageUrl       String
+  thumbnailUrl     String?
+  mimeType         String
+  sizeBytes        Int
+  width            Int?
+  height           Int?
+  durationSec      Float?
+  /// Extracted page text for EXTRACT items.
+  textContent      String?
+  capturedAt       DateTime       @default(now())
+  /// "browserbase", "firecrawl", "user", "sarvam".
+  capturedBy       String
+  browserSessionId String?
+  sha256           String?
+  isDemo           Boolean        @default(false)
+  deletedAt        DateTime?
+  createdAt        DateTime       @default(now())
+
+  reports  ReportEvidence[]
+  comments CommentEvidence[]
+
+  @@index([ownerId, capturedAt])
+  @@index([investigationId])
+  @@index([kind])
+}
+
+// ───────────────────────── Community reports ─────────────────────────
+
+model Report {
+  id               String           @id @default(cuid())
+  /// "TTD-7K2M9Q".
+  reference        String           @unique
+  reporterId       String?
+  reporter         User?            @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  /// Reporter name is never shown publicly when true.
+  isAnonymous      Boolean          @default(true)
+  kind             ReportKind       @default(SCAM)
+  category         ServiceType
+  summary          String
+  /// The allegation, always labelled "Not verified" in the UI.
+  description      String
+  /// Voice transcript in the speaker's language.
+  originalText     String?
+  originalLanguage String?
+  translatedText   String?
+  districtId       String
+  district         District         @relation(fields: [districtId], references: [id])
+  locationText     String?
+  lat              Float?
+  lng              Float?
+  incidentAt       DateTime?
+  propertyId       String?
+  property         Property?        @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  investigationId  String?
+  investigation    Investigation?   @relation(fields: [investigationId], references: [id], onDelete: SetNull)
+  reportedUrl      String?
+  amountInr        Int?
+  status           ReportStatus     @default(NEW)
+  priority         Level            @default(MEDIUM)
+  visibility       ReportVisibility @default(PUBLIC)
+  hiddenReason     String?
+  autoCheckedAt    DateTime?
+  autoCheckSummary String?
+  autoCheckMatches Int              @default(0)
+  assignedToId     String?
+  assignedTo       User?            @relation("ReportAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  firstReviewedAt  DateTime?
+  resolvedAt       DateTime?
+  /// Stream channel id, e.g. "report-TTD-7K2M9Q".
+  streamChannelId  String?          @unique
+  isDemo           Boolean          @default(false)
+  deletedAt        DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  events               ReportEvent[]
+  followers            ReportFollow[]
+  findings             OfficialFinding[]
+  comments             Comment[]
+  evidence             ReportEvidence[]
+  identifiers          ReportIdentifier[]
+  similar              ReportSimilarity[]         @relation("SimilarFrom")
+  similarTo            ReportSimilarity[]         @relation("SimilarTo")
+  investigationMatches InvestigationReportMatch[]
+  sources              Source[]
+  workflowRuns         WorkflowRun[]
+  voiceJobs            VoiceJob[]
+  documents            KnowledgeDocument[]
+
+  @@index([status, priority, createdAt])
+  @@index([districtId, createdAt])
+  @@index([reporterId])
+  @@index([propertyId])
+  @@index([lat, lng])
+  @@index([createdAt])
+}
+
+model ReportIdentifier {
+  reportId     String
+  identifierId String
+  /// "reported_url", "seller_upi", "seller_phone".
+  role         String?
+  report       Report     @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  identifier   Identifier @relation(fields: [identifierId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, identifierId])
+}
+
+/// A vault item attached to a report ("Drop screenshots or link the vault").
+model ReportEvidence {
+  reportId   String
+  evidenceId String
+  report     Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  evidence   Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@id([reportId, evidenceId])
+}
+
+/// Auto-check result: this report resembles another.
+model ReportSimilarity {
+  id              String @id @default(cuid())
+  reportId        String
+  report          Report @relation("SimilarFrom", fields: [reportId], references: [id], onDelete: Cascade)
+  similarReportId String
+  similarReport   Report @relation("SimilarTo", fields: [similarReportId], references: [id], onDelete: Cascade)
+  /// "same_url", "same_upi", "same_phone", "similar_text".
+  reason          String
+  score           Float?
+
+  @@unique([reportId, similarReportId, reason])
+}
+
+/// Status history timeline (Submitted, Auto-checked, Under review, Resolved...).
+model ReportEvent {
+  id         String          @id @default(cuid())
+  reportId   String
+  report     Report          @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  type       ReportEventType
+  actorId    String?
+  actor      User?           @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  fromStatus ReportStatus?
+  toStatus   ReportStatus?
+  note       String?
+  data       Json?
+  createdAt  DateTime        @default(now())
+
+  @@index([reportId, createdAt])
+}
+
+model ReportFollow {
+  reportId  String
+  userId    String
+  report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([reportId, userId])
+  @@index([userId])
+}
+
+/// Moderator-published finding, shown apart from the allegation and never as a chat message.
+model OfficialFinding {
+  id            String    @id @default(cuid())
+  reportId      String
+  report        Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  authorId      String?
+  author        User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  body          String
+  publishedAt   DateTime  @default(now())
+  retractedAt   DateTime?
+  retractedById String?
+  createdAt     DateTime  @default(now())
+
+  @@index([reportId, publishedAt])
+}
+
+/// Mirror of Stream chat messages for search, audit and moderation.
+model Comment {
+  id              String        @id @default(cuid())
+  reportId        String
+  report          Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  authorId        String?
+  author          User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  /// Role when posted, drives the Traveller / Official badge.
+  authorRole      UserRole      @default(TRAVELLER)
+  body            String
+  status          CommentStatus @default(VISIBLE)
+  flaggedReason   String?
+  flaggedAt       DateTime?
+  flaggedById     String?
+  moderatedById   String?
+  moderatedAt     DateTime?
+  streamMessageId String?       @unique
+  parentId        String?
+  parent          Comment?      @relation("CommentReplies", fields: [parentId], references: [id], onDelete: SetNull)
+  replies         Comment[]     @relation("CommentReplies")
+  createdAt       DateTime      @default(now())
+  editedAt        DateTime?
+
+  evidence CommentEvidence[]
+
+  @@index([reportId, createdAt])
+  @@index([status])
+}
+
+model CommentEvidence {
+  commentId  String
+  evidenceId String
+  comment    Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  evidence   Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  @@id([commentId, evidenceId])
+}
+
+// ─────────────────── Moderation, audit, notifications ───────────────────
+
+model ModerationAction {
+  id          String   @id @default(cuid())
+  moderatorId String
+  moderator   User     @relation(fields: [moderatorId], references: [id], onDelete: Cascade)
+  /// "report", "comment", "property", "tariff", "source".
+  targetType  String
+  targetId    String
+  /// "status_change", "publish_finding", "hide", "restore", "verify_property", "edit", "delete".
+  action      String
+  note        String?
+  before      Json?
+  after       Json?
+  createdAt   DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([moderatorId, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// "run_completed", "run_failed", "report_status", "report_comment", "finding_published",
+  /// "moderation_assigned", "usage_limit", "system".
+  type      String
+  title     String
+  body      String?
+  href      String?
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
+
+// ───────────────────────────── Assistant ─────────────────────────────
+
+model ChatThread {
+  id              String         @id @default(cuid())
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId     String?
+  workspace       Workspace?     @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  /// Set for "Ask about this result" threads on a verdict.
+  investigationId String?
+  investigation   Investigation? @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  title           String         @default("New chat")
+  /// Null = auto-detect; otherwise a BCP-47 code chosen from the language chips.
+  languageMode    String?
+  streamChannelId String?        @unique
+  lastMessageAt   DateTime       @default(now())
+  archivedAt      DateTime?
+  createdAt       DateTime       @default(now())
+
+  messages ChatMessage[]
+
+  @@index([userId, lastMessageAt])
+  @@index([investigationId])
+}
+
+model ChatMessage {
+  id              String     @id @default(cuid())
+  threadId        String
+  thread          ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role            ChatRole
+  content         String
+  /// AI SDK UIMessage parts (text, tool results such as the live-run card).
+  parts           Json?
+  language        String?
+  /// Source chips, e.g. [{ label, url, retrievedAt }].
+  citations       Json?
+  modelId         String?
+  promptVersion   String?
+  inputTokens     Int?
+  outputTokens    Int?
+  streamMessageId String?    @unique
+  createdAt       DateTime   @default(now())
+
+  toolCalls ToolCall[]
+  voiceJobs VoiceJob[]
+
+  @@index([threadId, createdAt])
+}
+
+// ───────────────────────────── Voice ─────────────────────────────
+
+model VoiceJob {
+  id               String         @id @default(cuid())
+  userId           String
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind             VoiceJobKind
+  status           RunStatus      @default(QUEUED)
+  /// History row title: "Airport taxi advice · English".
+  title            String?
+  inputText        String?
+  inputLanguage    String?
+  targetLanguage   String?
+  speaker          String?
+  pace             Float?
+  pitch            Float?
+  loudness         Float?
+  model            String?
+  /// hash(text, language, voice, pace...) to reuse audio instead of paying twice.
+  cacheKey         String?
+  charCount        Int?
+  storageKey       String?
+  audioUrl         String?
+  mimeType         String?
+  sizeBytes        Int?
+  durationSec      Float?
+  /// STT output in the spoken language.
+  transcript       String?
+  /// English translation of the transcript.
+  translated       String?
+  detectedLanguage String?
+  investigationId  String?
+  investigation    Investigation? @relation(fields: [investigationId], references: [id], onDelete: SetNull)
+  reportId         String?
+  report           Report?        @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  advisoryId       String?
+  advisory         Advisory?      @relation(fields: [advisoryId], references: [id], onDelete: SetNull)
+  chatMessageId    String?
+  chatMessage      ChatMessage?   @relation(fields: [chatMessageId], references: [id], onDelete: SetNull)
+  error            String?
+  createdAt        DateTime       @default(now())
+  completedAt      DateTime?
+
+  workflowRuns WorkflowRun[]
+
+  @@index([userId, createdAt])
+  @@index([cacheKey])
+}
+
+/// Cache for Sarvam translations.
+model Translation {
+  id             String   @id @default(cuid())
+  /// sha256 of the source text.
+  sourceHash     String
+  sourceLanguage String?
+  targetLanguage String
+  sourceText     String
+  translatedText String
+  provider       String   @default("sarvam")
+  createdAt      DateTime @default(now())
+
+  @@unique([sourceHash, targetLanguage])
+}
+
+// ───────────────────────────── Knowledge ─────────────────────────────
+
+model KnowledgeSource {
+  id                 String                @id @default(cuid())
+  name               String
+  /// Display host: "tourism-board.example", "Internal".
+  host               String?
+  /// "DIRECTORY", "TARIFF", "ADVISORY", "REPORT".
+  type               String
+  via                KnowledgeSourceVia
+  status             KnowledgeSourceStatus @default(PENDING)
+  crawlUrl           String?
+  /// Crawl scope, schedule hints, upload file keys.
+  config             Json?
+  recordCount        Int                   @default(0)
+  /// "records", "routes", "pages".
+  recordUnit         String                @default("records")
+  pineconeNamespace  String?
+  /// True for sources that stay current on their own (past community reports).
+  isLive             Boolean               @default(false)
+  syncSchedule       String?
+  lastSyncedAt       DateTime?
+  lastSyncDurationMs Int?
+  nextSyncAt         DateTime?
+  error              String?
+  isDemo             Boolean               @default(false)
+  createdById        String?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  documents    KnowledgeDocument[]
+  benchmarks   TariffBenchmark[]
+  workflowRuns WorkflowRun[]
+
+  @@index([status])
+}
+
+model KnowledgeDocument {
+  id          String           @id @default(cuid())
+  sourceId    String
+  source      KnowledgeSource  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  /// "tariff", "directory", "advisory", "report", "page".
+  docType     String
+  url         String?
+  title       String
+  text        String?
+  contentHash String
+  language    String?
+  districtId  String?
+  district    District?        @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  reportId    String?
+  report      Report?          @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  propertyId  String?
+  property    Property?        @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  benchmarkId String?
+  benchmark   TariffBenchmark? @relation(fields: [benchmarkId], references: [id], onDelete: SetNull)
+  publishedAt DateTime?
+  retrievedAt DateTime         @default(now())
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  chunks     VectorRecord[]
+  sources    Source[]
+  advisories Advisory[]
+
+  @@unique([sourceId, url])
+  @@index([sourceId, contentHash])
+  @@index([reportId])
+}
+
+/// One embedded chunk. Text stays here; only the vector lives in Pinecone.
+model VectorRecord {
+  /// Stable id "{documentId}:{chunkIndex}", also the Pinecone vector id, so re-syncs overwrite.
+  id             String            @id
+  documentId     String
+  document       KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkIndex     Int
+  text           String
+  tokenCount     Int?
+  /// { url, title, type, district, retrievedAt, docId }.
+  metadata       Json?
+  embeddingModel String
+  embeddingDim   Int
+  upsertedAt     DateTime?
+  createdAt      DateTime          @default(now())
+
+  @@unique([documentId, chunkIndex])
+}
+
+/// Dashboard "Regional advisories": advisories, tariff updates, helplines.
+model Advisory {
+  id          String             @id @default(cuid())
+  title       String
+  body        String?
+  /// "ADVISORY", "TARIFF", "HELPLINE".
+  kind        String
+  /// "Demo advisory", "Demo tariff", "Helpline 1930".
+  label       String
+  districtId  String?
+  district    District?          @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  sourceUrl   String?
+  documentId  String?
+  document    KnowledgeDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  pinned      Boolean            @default(false)
+  isActive    Boolean            @default(true)
+  isDemo      Boolean            @default(false)
+  publishedAt DateTime           @default(now())
+  expiresAt   DateTime?
+  createdById String?
+  createdAt   DateTime           @default(now())
+
+  voiceJobs VoiceJob[]
+
+  @@index([isActive, publishedAt])
+}
+
+// ───────────────────────────── Platform ─────────────────────────────
+
+model HelpArticle {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  /// "GUIDE" (the three cards) or "FAQ".
+  category    String
+  title       String
+  summary     String?
+  body        String
+  language    String    @default("en")
+  sortOrder   Int       @default(0)
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([category, sortOrder])
+}
+
+/// 1930, cybercrime.gov.in. Shown on the verdict, Help and footer.
+model EmergencyContact {
+  id          String  @id @default(cuid())
+  label       String
+  /// "1930" or "https://cybercrime.gov.in".
+  value       String
+  /// "PHONE" or "URL".
+  kind        String
+  description String?
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  message   String
+  rating    Int?
+  page      String?
+  createdAt DateTime @default(now())
+}
+
+/// Idempotency log for inbound webhooks. id = the provider's delivery id (svix-id).
+model WebhookEvent {
+  id          String    @id
+  /// "clerk", "stream", "inngest".
+  source      String
+  type        String
+  payload     Json?
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([source, type])
+  @@index([createdAt])
+}
+
+/// Small key/value switches: demo banner, maintenance mode, feature flags.
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
 }

@@ -1,12 +1,12 @@
 import { SignIn } from "@clerk/nextjs";
 import { Suspense } from "react";
 
+export const metadata = { title: "Sign in" };
+
 export default function SignInPage() {
   return (
-    <div className="w-full min-h-screen flex justify-center items-center">
-      <Suspense>
-        <SignIn />
-      </Suspense>
-    </div>
+    <Suspense>
+      <SignIn />
+    </Suspense>
   );
 }

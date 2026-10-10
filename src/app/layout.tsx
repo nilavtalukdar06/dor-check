@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ClerkProvider } from "@clerk/nextjs";
+import { shadcn } from "@clerk/ui/themes";
 import { PwaRegister } from "@/components/pwa/pwa-register";
 
 const geistSans = Geist({
@@ -91,21 +92,26 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <ClerkProvider>
-      <html
-        lang="en"
-        className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+    >
+      <body
+        className="min-h-full flex flex-col"
+        suppressHydrationWarning={true}
       >
-        <TooltipProvider>
-          <body
-            className="min-h-full flex flex-col"
-            suppressHydrationWarning={true}
-          >
+        <ClerkProvider
+          appearance={{
+            theme: shadcn,
+            variables: { colorPrimary: "#151515", colorInput: "#ffffff" },
+          }}
+        >
+          <TooltipProvider>
             {children}
             <PwaRegister />
-          </body>
-        </TooltipProvider>
-      </html>
-    </ClerkProvider>
+          </TooltipProvider>
+        </ClerkProvider>
+      </body>
+    </html>
   );
 }

@@ -9,7 +9,8 @@ export const env = createEnv({
     CLERK_SECRET_KEY: z.string().min(1),
 
     // Required once their phases are built; optional until then.
-    CLERK_WEBHOOK_SECRET: optional,
+    DIRECT_URL: optional,
+    CLERK_WEBHOOK_SIGNING_SECRET: optional,
     INNGEST_EVENT_KEY: optional,
     INNGEST_SIGNING_KEY: optional,
     GOOGLE_GENERATIVE_AI_API_KEY: optional,
