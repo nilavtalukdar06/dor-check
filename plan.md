@@ -64,7 +64,10 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 10 Price check screen | Done, then replaced by Price check v2 (below) |
 | 10b Price check v2 | Done: any place via Mapbox, reverse routes, live web research with cited sources, distance estimate, Mapbox 3D maps |
 | 11 Explore map | Done: Mapbox 3D map, layers, filters, search, nearby list, mobile bottom sheet; `GET /api/map` |
-| 12 onwards | Open |
+| 12 Directory screen | Done: tabs, search, Verified only, URL-driven drawer, Check a price link |
+| 13 Inngest setup | Done: client, typed events (incl. report, source sync, voice), `/api/inngest`, hello-world with `/dev/inngest`, price workflow |
+| 14 Firecrawl research | Done: `server/research.ts` (search, scrape, save sources), URL safety and token-budget rules, retries and timeouts |
+| 15 onwards | Open |
 
 Decisions that override the original text below:
 
@@ -379,7 +382,7 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 
 **Goal:** durable background workflows run locally and in production.
 
-**Status:** the client (`src/inngest/client.ts`), typed event (`events.ts`), Realtime channel (`channels.ts`), `/api/inngest` route and the `run-price-check` workflow exist. Run `npm run inngest:dev` next to `npm run dev`. Still to do here: `report/submitted`, `source/sync.requested`, `voice/transcribe.requested`, and syncing the app in Inngest Cloud after deploy.
+**Status:** the client (`src/inngest/client.ts`), typed event (`events.ts`), Realtime channel (`channels.ts`), `/api/inngest` route and the `run-price-check` workflow exist. Run `npm run inngest:dev` next to `npm run dev`. The `report/submitted`, `source/sync.requested` and `voice/transcribe.requested` events are typed (their functions arrive in Phases 22, 17 and 26), `hello-world` runs from `/dev/inngest`, and only syncing the app in Inngest Cloud after deploy remains.
 
 **Deliverables:** Inngest client, `/api/inngest` route, a hello-world function, events typed.
 
@@ -685,6 +688,12 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 - `/moderation`: queue table with priority, filters, review drawer (status select, note to reporter, publish official finding), flagged comments tab, directory tab.
 - `/workflows`: run list from Inngest events mirrored in DB, KPIs, event stream.
 - Directory and tariff tabs in `/moderation`: forms for the existing `createPropertyAction` / `updatePropertyAction` / `verifyPropertyAction` / `deletePropertyAction` (Phase 8), a place picker that sets the pin, plus create and edit for tariff boards and curated tariffs, and a review queue for researched tariffs (`reviewStatus: pending`). This is how real properties and tariff boards replace the demo ones.
+- **Listing requests** (how a business gets into the directory without developer help):
+  - **Request form:** a signed-in "Request a listing" form (reachable from the Directory screen and Help) with business name, type, district, a place picker for the pin, phone, website, business UPI, registration number, a short description and an optional document upload (R2, 8 MB).
+  - **Pending state:** a request creates a `Property` with `listingStatus: "PENDING"`, hidden from the public directory, the map and search. It records `requestedById`. Rate limit: 3 requests per user per day. Duplicate check by domain, phone and UPI against existing properties and identifiers.
+  - **Moderator review:** a "Listing requests" tab in `/moderation` with the submitted details and document. Actions: **Approve and list**, **Approve and verify**, or **Reject** with a reason. Each writes a `ModerationAction` and `AuditLog` and notifies the requester (`Notification`).
+  - **Verifying:** a moderator checks the registration number, domain, business phone and UPI (and a document or call-back where possible), then sets Verified. The record shows who verified it and when. The app never claims to have checked the business itself.
+  - **Schema:** one small migration adds `Property.listingStatus` (`"PENDING" | "APPROVED" | "REJECTED"`, default `"APPROVED"` so existing rows stay listed), `requestedById`, `rejectionReason` and `documentEvidenceId`. The public directory, the map and search filter on `listingStatus = "APPROVED"`.
 - `/knowledge`: sources table, add source, re-sync button, test-a-query box with scores.
 
 **Tech:** shadcn table + sheet, server actions, Inngest REST API or your own `RunEvent` tables, Pinecone query for the test box.
@@ -696,7 +705,7 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 4. "Add source" → create `KnowledgeSource` → send `source/sync.requested`.
 5. Query box calls `retrieve()` and shows score, source and chunk text.
 
-**Done when:** a moderator can take a NEW report to VERIFIED with a published finding, and the traveller sees it.
+**Done when:** a moderator can take a NEW report to VERIFIED with a published finding, and the traveller sees it; and a business can request a listing, a moderator approves and verifies it, and it appears in the directory and on the map.
 
 ---
 

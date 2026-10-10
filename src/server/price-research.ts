@@ -1,7 +1,5 @@
-import Firecrawl from "@mendable/firecrawl-js";
 import { generateText, Output } from "ai";
 import { z } from "zod";
-import { env } from "@/lib/env";
 import {
   aggregate,
   domainOf,
@@ -12,6 +10,7 @@ import {
   type PriceUnit,
 } from "@/lib/price-research";
 import { aiConfigured, extractionModel } from "./ai";
+import { researchAvailable, searchWeb } from "./research";
 
 export type ResearchSubject = {
   service: "TAXI" | "STAY" | "GUIDE" | "TOUR";
@@ -48,23 +47,9 @@ export type ResearchResult =
 /** How many prices survived each filter; shown on the timeline and kept for debugging. */
 export type ResearchStats = { extracted: number; matching: number; verified: number; usable: number };
 
-/** Sites that are login walls or never carry a fare table. */
-const EXCLUDE_DOMAINS = [
-  "facebook.com",
-  "instagram.com",
-  "x.com",
-  "twitter.com",
-  "youtube.com",
-  "linkedin.com",
-  "pinterest.com",
-  "reddit.com",
-  "quora.com",
-];
-
-const PAGE_CHARS = 6000;
 const RESULTS_PER_QUERY = 5;
 
-export const researchConfigured = () => Boolean(env.FIRECRAWL_API_KEY) && aiConfigured();
+export const researchConfigured = () => researchAvailable() && aiConfigured();
 
 /** The unit a quote for this service is compared in. */
 export function unitFor(subject: ResearchSubject): Exclude<PriceUnit, "PER_KM"> {
@@ -138,10 +123,9 @@ export type PageResult = {
   verified: number;
 };
 
-/** Find public pages that may state prices (Firecrawl search + scrape). Throws if both searches fail. */
+/** Find public pages that may state prices. Throws if every search fails, so the workflow retries. */
 export async function searchPages(subject: ResearchSubject, log?: ToolLog): Promise<ResearchPage[]> {
   if (!researchConfigured()) return [];
-  const firecrawl = new Firecrawl({ apiKey: env.FIRECRAWL_API_KEY! });
   const pages = new Map<string, ResearchPage>();
   let failures = 0;
   const queries = searchQueries(subject);
@@ -150,20 +134,9 @@ export async function searchPages(subject: ResearchSubject, log?: ToolLog): Prom
     queries.map(async (query) => {
       const started = Date.now();
       try {
-        const res = await firecrawl.search(query, {
-          limit: RESULTS_PER_QUERY,
-          excludeDomains: EXCLUDE_DOMAINS,
-          country: "IN",
-          timeout: 20_000,
-          scrapeOptions: { formats: ["markdown"], onlyMainContent: true },
-        });
-        const docs = (res.web ?? []) as { url?: string; markdown?: string; metadata?: { title?: string; sourceURL?: string } }[];
-        for (const d of docs) {
-          const url = d.url ?? d.metadata?.sourceURL;
-          if (!url || !d.markdown || d.markdown.length < 200 || pages.has(url)) continue;
-          pages.set(url, { url, title: d.metadata?.title ?? domainOf(url), text: d.markdown.slice(0, PAGE_CHARS) });
-        }
-        await log?.({ name: "firecrawl.search", input: { query }, output: { results: docs.length }, durationMs: Date.now() - started, ok: true });
+        const hits = await searchWeb(query, { limit: RESULTS_PER_QUERY, includeText: true });
+        for (const h of hits) if (h.text && !pages.has(h.url)) pages.set(h.url, { url: h.url, title: h.title, text: h.text });
+        await log?.({ name: "firecrawl.search", input: { query }, output: { results: hits.length }, durationMs: Date.now() - started, ok: true });
       } catch (err) {
         failures++;
         await log?.({ name: "firecrawl.search", input: { query }, durationMs: Date.now() - started, ok: false, error: String(err) });

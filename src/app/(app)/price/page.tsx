@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { formValuesFrom } from "@/components/price/form-values";
+import { formValuesFrom, type PriceFormValues } from "@/components/price/form-values";
 import { PriceCheckClient } from "@/components/price/price-check-client";
 import { PriceResultPanel } from "@/components/price/price-result";
 import { ResearchProgress } from "@/components/price/research-progress";
@@ -7,6 +7,7 @@ import { EmptyResult } from "@/components/price/result-placeholders";
 import { CardSkeleton, LoadingState } from "@/components/shell/loading";
 import { PageHeader } from "@/components/shell/page-header";
 import { rs } from "@/lib/format";
+import { PRICE_SERVICES } from "@/lib/price-schema";
 import { getPricePage } from "@/server/price-check";
 import { getPriceFormOptions } from "@/server/price-options";
 import { getCurrentUser } from "@/server/users";
@@ -17,8 +18,15 @@ export const metadata = { title: "Price check" };
 export const maxDuration = 60;
 
 async function PriceCheckLoader({ searchParams }: Pick<PageProps<"/price">, "searchParams">) {
-  const { check } = await searchParams;
+  const { check, service, place } = await searchParams;
   const id = typeof check === "string" ? check : null;
+  // Links from elsewhere (the directory) can start a check: /price?service=STAY&place=Majuli
+  const startService = PRICE_SERVICES.find((s) => s === service);
+  const startPlace = typeof place === "string" ? place.slice(0, 120) : "";
+  const prefill: Partial<PriceFormValues> | undefined =
+    !id && startService
+      ? { service: startService, ...(startService === "TAXI" ? { origin: startPlace } : { location: startPlace }) }
+      : undefined;
 
   const [options, user] = await Promise.all([getPriceFormOptions(), getCurrentUser()]);
   const page = id && user ? await getPricePage(user.id, id) : null;
@@ -27,9 +35,9 @@ async function PriceCheckLoader({ searchParams }: Pick<PageProps<"/price">, "sea
   return (
     // Keyed by the check and its status so the form refills when another check opens.
     <PriceCheckClient
-      key={page ? `${page.id}:${page.status}` : "new"}
+      key={page ? `${page.id}:${page.status}` : `new:${startService ?? ""}:${startPlace}`}
       options={options}
-      defaults={page ? formValuesFrom(page.input, quoted) : undefined}
+      defaults={page ? formValuesFrom(page.input, quoted) : prefill}
       currentId={page?.id ?? null}
     >
       {!page ? (
