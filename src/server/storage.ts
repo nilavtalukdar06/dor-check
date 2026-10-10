@@ -40,9 +40,22 @@ export async function putObject(key: string, body: Uint8Array, contentType: stri
   return { key, ref: storageRef(key) };
 }
 
-/** A link that works for `expiresInSeconds` (default 10 minutes). */
-export async function signedUrl(key: string, expiresInSeconds = 600) {
-  return getSignedUrl(client(), new GetObjectCommand({ Bucket: env.R2_BUCKET!, Key: key }), { expiresIn: expiresInSeconds });
+/**
+ * A link that works for `expiresInSeconds` (default 10 minutes). With `downloadAs` the
+ * browser saves the file under that name instead of showing it.
+ */
+export async function signedUrl(key: string, expiresInSeconds = 600, downloadAs?: string) {
+  const disposition = downloadAs ? `attachment; filename="${downloadAs.replace(/[^\w.\- ]/g, "_")}"` : undefined;
+  return getSignedUrl(client(), new GetObjectCommand({ Bucket: env.R2_BUCKET!, Key: key, ResponseContentDisposition: disposition }), {
+    expiresIn: expiresInSeconds,
+  });
+}
+
+/** The raw bytes of a stored file. */
+export async function getObjectBytes(key: string) {
+  const res = await client().send(new GetObjectCommand({ Bucket: env.R2_BUCKET!, Key: key }));
+  if (!res.Body) throw new Error("File is empty or missing");
+  return res.Body.transformToByteArray();
 }
 
 export async function deleteObject(key: string) {

@@ -1,7 +1,17 @@
 import { inngest } from "../client";
+import { captureRunChannel } from "../channels";
 import { captureRequested } from "../events";
 import prisma from "@/lib/prisma";
 import { capturePage, type CaptureResult } from "@/server/capture";
+
+/** Live updates are a nicety: if one cannot be sent, the capture carries on and the page re-reads the database. */
+async function publishLive(task: () => Promise<unknown>) {
+  try {
+    await task();
+  } catch (err) {
+    console.warn("capture realtime publish failed", err instanceof Error ? err.message : err);
+  }
+}
 
 /**
  * Durable page capture. A failed capture is a recorded result, not a failed run: the caller
@@ -19,6 +29,7 @@ export const captureOnePage = inngest.createFunction(
       if (!id) return;
       await prisma.investigation.update({ where: { id }, data: { status: "FAILED", error: "The capture could not finish" } }).catch(() => undefined);
       await prisma.workflowRun.updateMany({ where: { investigationId: id, status: "RUNNING" }, data: { status: "FAILED", finishedAt: new Date() } });
+      await publishLive(() => inngest.realtime.publish(captureRunChannel(id).finished, { status: "FAILED", at: Date.now() }));
     },
   },
   async ({ event, step }) => {
@@ -46,19 +57,16 @@ export const captureOnePage = inngest.createFunction(
         },
         emit: async (type, message) => {
           await prisma.runEvent.create({ data: { runId: target.runId, type, message } });
+          await publishLive(() => inngest.realtime.publish(captureRunChannel(investigationId).event, { type, message, at: Date.now() }));
         },
       }),
     );
 
     await step.run("finish", async () => {
       const ok = result.ok;
-      await prisma.runEvent.create({
-        data: {
-          runId: target.runId,
-          type: ok ? "capture_completed" : "capture_failed",
-          message: ok ? `Captured ${result.evidence.length} evidence item${result.evidence.length === 1 ? "" : "s"}` : result.message,
-        },
-      });
+      const type = ok ? "capture_completed" : "capture_failed";
+      const message = ok ? `Captured ${result.evidence.length} evidence item${result.evidence.length === 1 ? "" : "s"}` : result.message;
+      await prisma.runEvent.create({ data: { runId: target.runId, type, message } });
       await prisma.workflowRun.update({
         where: { id: target.runId },
         data: { status: ok ? "COMPLETED" : "FAILED", finishedAt: new Date(), error: ok ? null : result.message },
@@ -66,6 +74,11 @@ export const captureOnePage = inngest.createFunction(
       await prisma.investigation.update({
         where: { id: investigationId },
         data: { status: ok ? "COMPLETED" : "FAILED", completedAt: new Date(), error: ok ? null : result.message },
+      });
+      // Announced last, once the database already says the run is over.
+      await publishLive(async () => {
+        await inngest.realtime.publish(captureRunChannel(investigationId).event, { type, message, at: Date.now() });
+        await inngest.realtime.publish(captureRunChannel(investigationId).finished, { status: ok ? "COMPLETED" : "FAILED", at: Date.now() });
       });
     });
     return { ok: result.ok };

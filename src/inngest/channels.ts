@@ -29,3 +29,20 @@ export const priceRunChannel = channel({
     finished: { schema: z.object({ status: z.enum(["COMPLETED", "FAILED"]), at: z.number() }) },
   },
 });
+
+/** One thing the capture browser did, e.g. page_navigated: "Opening example.com". */
+export const captureEventSchema = z.object({
+  type: z.string(),
+  message: z.string(),
+  at: z.number(),
+});
+export type CaptureLiveEvent = z.infer<typeof captureEventSchema>;
+
+/** Live progress of one page capture. Subscribers get a token for exactly this investigation. */
+export const captureRunChannel = channel({
+  name: (investigationId: string) => `capture-run:${investigationId}`,
+  topics: {
+    event: { schema: captureEventSchema },
+    finished: { schema: z.object({ status: z.enum(["COMPLETED", "FAILED"]), at: z.number() }) },
+  },
+});

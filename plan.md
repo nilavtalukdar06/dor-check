@@ -68,7 +68,8 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 13 Inngest setup | Done: client, typed events (incl. report, source sync, voice), `/api/inngest`, hello-world with `/dev/inngest`, price workflow |
 | 14 Firecrawl research | Done: `server/research.ts` (search, scrape, save sources), URL safety and token-budget rules, retries and timeouts |
 | 15 Stagehand + Browserbase capture and live preview | Done: `server/capture.ts`, private R2 storage with signed links, live-view API and `LiveBrowser`, `/dev/capture` |
-| 16 onwards | Open |
+| 16 Evidence vault | Done: `/evidence` grid, filters, URL-driven drawer, upload, download, Download all (zip), delete, and **Capture a page with a realtime live preview** |
+| 17 onwards | Open |
 
 Decisions that override the original text below:
 
@@ -458,19 +459,30 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 
 ## Phase 16 — Evidence vault
 
-**Goal:** browse every capture and upload.
+**Goal:** browse every capture and upload, and start a new capture while watching the remote browser live.
 
-**Deliverables:** `/evidence` grid with filters, detail viewer, download, manual upload.
+**Deliverables:** `/evidence` grid with filters, detail viewer, download, manual upload, and a **Capture a page** action that shows the Browserbase live preview in realtime.
 
-**Tech:** R2 signed links (private bucket), `react-dropzone`.
+**Tech:** R2 signed links (private bucket), `react-dropzone`, `fflate` (zip), Inngest Realtime.
 
 **How to build**
 1. Grid cards show thumbnail, title, subject, timestamp and type badge.
-2. Uploads: client upload to R2 with an authenticated token route; limit 8 MB images.
+2. Uploads: images only (PNG, JPEG, WebP), 8 MB limit.
 3. Detail view shows URL, captured time, linked investigation or report.
-4. "Download all" zips selected files server-side (optional).
+4. "Download all" zips the matching items server-side.
+5. "Capture a page" starts a capture and shows the live browser and the steps it takes as they happen.
 
-**Done when:** uploading an image makes it appear in the grid and in a report attachment picker.
+**Built (differs from the text above):**
+- **Upload goes through our own route** (`POST /api/evidence/upload`), not straight to R2. The server checks the file's real type and size from its bytes (a file called `.png` that is not an image is refused, SVG is refused), hashes it, stores it privately and writes the `Evidence` row. This avoids R2 CORS setup. **Hosting note:** serverless hosts cap request bodies (Vercel: about 4.5 MB), so on such a host either compress images in the browser first or move to presigned PUT uploads plus an R2 CORS rule.
+- **Capture from the vault:** `startCapture` (`server/capture-run.ts`) is shared with `/dev/capture`. It refuses unsafe addresses, allows one running capture per person and 10 per hour, then sends the `capture/page.requested` event. The page URL gains `?capture=<id>` and shows `CapturePanel`.
+- **Realtime live preview:** the panel embeds `LiveBrowser` (the Browserbase live view, read-only) and subscribes to the Inngest Realtime channel `capture-run:<id>` (`inngest/channels.ts`: topics `event` and `finished`). The `capture-page` function publishes every browser action and the final status; the panel adds each step to its timeline as it arrives, and when the run finishes it swaps the live frame for the final screenshot and refreshes the grid. A 6-second refresh stays as a fallback for a missed message. Verified with the fallback switched off.
+- **Private by design:** every query, route and token is limited to the item's owner; files are served only through short-lived signed links (`/api/evidence/[id]/file`, `?download=1` to save). A realtime token is only minted for the owner of the run.
+- **Delete** removes the row (soft) and the file, but an item a report cites cannot be deleted.
+- **The "attachment picker" for reports lands in Phase 22**, because the report form does not exist yet. It will call `listEvidence` from `server/evidence.ts`.
+- A page the browser cannot read (for example the Gemini quota is used up) still saves the screenshot; the timeline says so in plain words and the technical reason goes to the server log.
+- `Evidence` rows made by `/dev/capture` show up in the vault too, because they belong to the same person.
+
+**Done when:** uploading an image makes it appear in the grid; starting a capture shows the live browser and ends with the screenshot in the grid. (The report attachment picker is checked in Phase 22.)
 
 ---
 
@@ -554,7 +566,7 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 2. Server action: validate, check usage limit, create `Investigation` (QUEUED), `inngest.send`, redirect to the run page.
 3. `GET /api/investigations/[id]/events` streams `RunEvent` rows after a `lastId` cursor over SSE (poll the DB every 1 s on the server side). If SSE is hard on your host, poll every 2 s with React Query.
 4. `StepTimeline` renders step state (done / running / waiting / retrying) plus tool chips.
-4a. **Live preview pane (doable).** While the run is RUNNING and has a `browserSessionId`, the right-hand "Live preview" card fetches `/api/investigations/[id]/live` and embeds the returned live view URL in a read-only iframe, with the current page URL and the latest action line under it ("Opening listing page…", "Reading payment instructions…"). Before the session exists it shows a skeleton with the text "Starting a secure browser…". On the `browserbase-disconnected` message, or when the run finishes, it swaps to the final screenshot with "Captured at hh:mm:ss · 1280 x 800". If the live view fails to load it falls back to the screenshot and the timeline; a failed preview never fails the run.
+4a. **Live preview pane (doable; the pattern is built in Phase 16: `CapturePanel` + `LiveBrowser` + the `capture-run:<id>` realtime channel, reuse it).** While the run is RUNNING and has a `browserSessionId`, the right-hand "Live preview" card fetches `/api/investigations/[id]/live` and embeds the returned live view URL in a read-only iframe, with the current page URL and the latest action line under it ("Opening listing page…", "Reading payment instructions…"). Before the session exists it shows a skeleton with the text "Starting a secure browser…". On the `browserbase-disconnected` message, or when the run finishes, it swaps to the final screenshot with "Captured at hh:mm:ss · 1280 x 800". If the live view fails to load it falls back to the screenshot and the timeline; a failed preview never fails the run.
 5. When status is `COMPLETED`, redirect to the verdict.
 
 **Done when:** submitting a link shows steps ticking live and ends on the verdict page.

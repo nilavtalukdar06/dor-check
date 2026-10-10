@@ -179,8 +179,10 @@ export async function capturePage(url: string, owner: CaptureOwner): Promise<Cap
       evidence.push({ id: row.id, kind: "EXTRACT", title: "Page facts" });
       await emit("page_read", facts?.asksForAdvancePayment ? "The page asks for payment in advance" : "Read the page");
     } catch (err) {
-      // Reading failed; the screenshot is still good evidence.
-      await emit("page_read_failed", `Could not read the page text: ${String(err).slice(0, 80)}`);
+      // Reading failed (model quota, a timeout); the screenshot is still good evidence. The
+      // technical reason stays in the server log, not in the traveller's timeline.
+      console.warn("capture: reading the page failed", String(err).slice(0, 300));
+      await emit("page_read_failed", "Could not read the page text, but the screenshot is saved");
     }
 
     return { ok: true, sessionId: sessionId ?? "", finalUrl, pageTitle, facts, evidence };
