@@ -5,6 +5,7 @@ export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
+    seed: "node --env-file=.env --import tsx prisma/seed.ts",
   },
   datasource: {
     // Migrations need a direct (non-pooled) connection; the app uses the pooled

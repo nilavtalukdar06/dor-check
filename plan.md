@@ -53,7 +53,8 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 5 Database | Done: 54 models, migrations `init` and `live_preview` (adds `WorkflowRun.browserSessionId`) |
 | 6 Clerk auth and user sync | Done: webhook, first-sign-in sync |
 | 7 Roles and protected routes | Done: `requireRole`, moderator-only pages, 403 page |
-| 8 onwards | Open |
+| 8 Seed data and directory | Done: `npm run db:seed` / `db:reset` (about 10 s), moderator directory actions, tested |
+| 9 onwards | Open |
 
 Decisions that override the original text below:
 
