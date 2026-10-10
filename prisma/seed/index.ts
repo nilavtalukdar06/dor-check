@@ -1,10 +1,10 @@
 import prisma from "../../src/lib/prisma";
+import { INTERNAL_SOURCES, NAMESPACE } from "../../src/lib/knowledge";
 import { routeKey } from "../../src/lib/route-key";
 import {
   advisories,
   emergencyContacts,
   helpArticles,
-  knowledgeSources,
   plans,
   properties,
   tariffBoards,
@@ -83,15 +83,14 @@ export async function seed() {
   });
 
   // Knowledge sources and advisories.
-  await prisma.knowledgeSource.createMany({
-    data: knowledgeSources.map((k, i) => ({
-      id: `seed-source-${i}`,
-      ...k,
-      lastSyncedAt: k.lastSyncedAt ? at(k.lastSyncedAt) : null,
-      isDemo: true,
-    })),
-    skipDuplicates: true,
-  });
+  // The knowledge sources read from our own tables; run `npm run knowledge:sync` to fill the vector index.
+  for (const k of INTERNAL_SOURCES) {
+    await prisma.knowledgeSource.upsert({
+      where: { id: k.id },
+      create: { id: k.id, name: k.name, host: "Internal", type: k.type, via: "INTERNAL", recordUnit: k.recordUnit, pineconeNamespace: NAMESPACE[k.type], isLive: k.isLive },
+      update: {},
+    });
+  }
   await prisma.advisory.createMany({
     data: advisories.map(({ district, publishedAt, ...a }, i) => ({
       id: `seed-advisory-${i}`,
@@ -102,7 +101,7 @@ export async function seed() {
     })),
     skipDuplicates: true,
   });
-  log(`${knowledgeSources.length} knowledge sources, ${advisories.length} advisories`);
+  log(`${INTERNAL_SOURCES.length} knowledge sources, ${advisories.length} advisories`);
 
   // Tariff boards and benchmarks.
   const boardId = new Map<string, string>(tariffBoards.map((b) => [b.key, `seed-board-${b.key}`]));

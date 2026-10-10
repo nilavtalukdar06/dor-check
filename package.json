@@ -21,7 +21,9 @@
     "test:map": "node --env-file=.env --import tsx scripts/map-check.ts",
     "test:directory-view": "node --env-file=.env --import tsx scripts/directory-check.ts",
     "test:research": "node --env-file=.env --import tsx scripts/research-check.ts",
-    "test:capture": "node --env-file=.env --import tsx scripts/capture-check.mts"
+    "test:capture": "node --env-file=.env --import tsx scripts/capture-check.mts",
+    "knowledge:sync": "node --env-file=.env --import tsx scripts/knowledge-sync.mts",
+    "test:knowledge": "node --env-file=.env --import tsx scripts/knowledge-check.mts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.93",
@@ -33,6 +35,7 @@
     "@clerk/nextjs": "^7.9.14",
     "@clerk/ui": "^1.40.0",
     "@mendable/firecrawl-js": "^4.46.0",
+    "@pinecone-database/pinecone": "^9.0.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "@shadcn/react": "^0.3.1",

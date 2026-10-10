@@ -187,9 +187,3 @@ export const advisories = [
   { title: "Report official fraud at cybercrime.gov.in", kind: "HELPLINE", label: "Helpline 1930", district: null, publishedAt: "2026-10-01T09:00:00+05:30", pinned: false },
 ];
 
-export const knowledgeSources = [
-  { name: "Demo tourism directory", host: "tourism-board.example", type: "DIRECTORY", via: "FIRECRAWL" as const, status: "INDEXED" as const, recordCount: 1240, recordUnit: "records", crawlUrl: "https://tourism-board.example/directory", lastSyncedAt: "2026-10-10T06:00:00+05:30" },
-  { name: "Taxi tariff sheets", host: "tariffs.example", type: "TARIFF", via: "UPLOAD" as const, status: "INDEXED" as const, recordCount: 86, recordUnit: "routes", crawlUrl: null, lastSyncedAt: "2026-10-07T06:00:00+05:30" },
-  { name: "Past community reports", host: "Internal", type: "REPORT", via: "INTERNAL" as const, status: "INDEXED" as const, recordCount: 38, recordUnit: "records", crawlUrl: null, lastSyncedAt: null, isLive: true },
-  { name: "Advisories", host: "advisories.example", type: "ADVISORY", via: "FIRECRAWL" as const, status: "SYNCING" as const, recordCount: 14, recordUnit: "pages", crawlUrl: "https://advisories.example", lastSyncedAt: "2026-10-09T06:00:00+05:30" },
-];

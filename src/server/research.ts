@@ -3,7 +3,13 @@ import Firecrawl from "@mendable/firecrawl-js";
 import { env } from "@/lib/env";
 import prisma from "@/lib/prisma";
 import { withRetry } from "@/lib/retry";
-import { DENY_DOMAINS, hostOf, isAllowedSource, isSafePublicUrl, truncateToBudget } from "@/lib/research-policy";
+import {
+  DENY_DOMAINS,
+  hostOf,
+  isAllowedSource,
+  isSafePublicUrl,
+  truncateToBudget,
+} from "@/lib/research-policy";
 
 // Public-web research for the whole app: search, scrape, and record what was found with its
 // URL and retrieval time. A page we could not fetch is "source unavailable", never evidence.
@@ -24,15 +30,33 @@ export type ResearchHit = {
 };
 
 export type ScrapeResult =
-  | { ok: true; url: string; title: string; domain: string; text: string; httpStatus: number | null; retrievedAt: string }
-  | { ok: false; url: string; domain: string; reason: "blocked" | "unavailable"; retrievedAt: string };
+  | {
+      ok: true;
+      url: string;
+      title: string;
+      domain: string;
+      text: string;
+      httpStatus: number | null;
+      retrievedAt: string;
+    }
+  | {
+      ok: false;
+      url: string;
+      domain: string;
+      reason: "blocked" | "unavailable";
+      retrievedAt: string;
+    };
 
 export const researchAvailable = () => Boolean(env.FIRECRAWL_API_KEY);
 
 /** The SDK needs maxRetries of at least 1 to make a request; withRetry below owns real retrying. */
 function client(timeoutMs: number) {
   if (!env.FIRECRAWL_API_KEY) throw new Error("FIRECRAWL_API_KEY is not set");
-  return new Firecrawl({ apiKey: env.FIRECRAWL_API_KEY, timeoutMs, maxRetries: 1 });
+  return new Firecrawl({
+    apiKey: env.FIRECRAWL_API_KEY,
+    timeoutMs,
+    maxRetries: 1,
+  });
 }
 
 type Doc = {
@@ -40,11 +64,18 @@ type Doc = {
   title?: string;
   description?: string;
   markdown?: string;
-  metadata?: { title?: string; description?: string; sourceURL?: string; url?: string; statusCode?: number };
+  metadata?: {
+    title?: string;
+    description?: string;
+    sourceURL?: string;
+    url?: string;
+    statusCode?: number;
+  };
 };
 
 /** Quota or auth problems will not fix themselves on a retry. */
-const retryable = (err: unknown) => !/\b(401|402|403)\b|unauthorized|payment|insufficient/i.test(String(err));
+const retryable = (err: unknown) =>
+  !/\b(401|402|403)\b|unauthorized|payment|insufficient/i.test(String(err));
 
 /**
  * Search the public web. Hits on denied sites and unsafe addresses are dropped. Throws when the
@@ -52,7 +83,10 @@ const retryable = (err: unknown) => !/\b(401|402|403)\b|unauthorized|payment|ins
  */
 export async function searchWeb(
   query: string,
-  { limit = 5, includeText = false }: { limit?: number; includeText?: boolean } = {},
+  {
+    limit = 5,
+    includeText = false,
+  }: { limit?: number; includeText?: boolean } = {},
 ): Promise<ResearchHit[]> {
   // Searching and scraping every result takes longer than searching alone. Two attempts must
   // fit inside one Inngest step (the /api/inngest route allows 60 s); a failed step is retried.
@@ -64,9 +98,20 @@ export async function searchWeb(
         country: "IN",
         excludeDomains: [...DENY_DOMAINS],
         timeout: attemptMs - 5_000,
-        ...(includeText ? { scrapeOptions: { formats: ["markdown" as const], onlyMainContent: true } } : {}),
+        ...(includeText
+          ? {
+              scrapeOptions: {
+                formats: ["markdown" as const],
+                onlyMainContent: true,
+              },
+            }
+          : {}),
       }),
-    { retries: includeText ? 1 : 2, timeoutMs: attemptMs, shouldRetry: retryable },
+    {
+      retries: includeText ? 1 : 2,
+      timeoutMs: attemptMs,
+      shouldRetry: retryable,
+    },
   );
 
   const retrievedAt = new Date().toISOString();
@@ -82,34 +127,53 @@ export async function searchWeb(
       title: d.title ?? d.metadata?.title ?? hostOf(url),
       domain: hostOf(url),
       snippet: d.description ?? d.metadata?.description ?? null,
-      text: includeText && markdown && markdown.length >= 200 ? truncateToBudget(markdown, PAGE_TOKEN_BUDGET) : null,
+      text:
+        includeText && markdown && markdown.length >= 200
+          ? truncateToBudget(markdown, PAGE_TOKEN_BUDGET)
+          : null,
       retrievedAt,
     });
   }
   return hits;
 }
 
-/** Fetch one public page as markdown. Never throws: failures come back as `ok: false`. */
-export async function scrapeUrl(url: string): Promise<ScrapeResult> {
+/**
+ * Fetch one public page as markdown. Never throws: failures come back as `ok: false`. Research
+ * keeps pages short; pass a larger `tokenBudget` when the whole page is wanted (knowledge sync).
+ */
+export async function scrapeUrl(
+  url: string,
+  { tokenBudget = PAGE_TOKEN_BUDGET }: { tokenBudget?: number } = {},
+): Promise<ScrapeResult> {
   const retrievedAt = new Date().toISOString();
   const domain = hostOf(url);
-  if (!isSafePublicUrl(url) || !isAllowedSource(url)) return { ok: false, url, domain, reason: "blocked", retrievedAt };
+  if (!isSafePublicUrl(url) || !isAllowedSource(url))
+    return { ok: false, url, domain, reason: "blocked", retrievedAt };
 
   try {
-    const doc = (await withRetry(() => client(30_000).scrape(url, { formats: ["markdown"], onlyMainContent: true, timeout: 25_000 }), {
-      retries: 1,
-      timeoutMs: 30_000,
-      shouldRetry: retryable,
-    })) as Doc;
+    const doc = (await withRetry(
+      () =>
+        client(30_000).scrape(url, {
+          formats: ["markdown"],
+          onlyMainContent: true,
+          timeout: 25_000,
+        }),
+      {
+        retries: 1,
+        timeoutMs: 30_000,
+        shouldRetry: retryable,
+      },
+    )) as Doc;
     const markdown = doc.markdown?.trim();
     const status = doc.metadata?.statusCode ?? null;
-    if (!markdown || (status !== null && status >= 400)) return { ok: false, url, domain, reason: "unavailable", retrievedAt };
+    if (!markdown || (status !== null && status >= 400))
+      return { ok: false, url, domain, reason: "unavailable", retrievedAt };
     return {
       ok: true,
       url,
       domain,
       title: doc.metadata?.title ?? hostOf(url),
-      text: truncateToBudget(markdown, PAGE_TOKEN_BUDGET),
+      text: truncateToBudget(markdown, tokenBudget),
       httpStatus: status,
       retrievedAt,
     };
@@ -124,7 +188,10 @@ type Saveable = ResearchHit | ScrapeResult;
  * Record what research found as Source rows: URL, title, retrieval time, a short excerpt and a
  * content hash. Pages that could not be fetched are stored flagged `unavailable`, with no excerpt.
  */
-export async function saveSources(items: Saveable[], owner: { investigationId?: string } = {}) {
+export async function saveSources(
+  items: Saveable[],
+  owner: { investigationId?: string } = {},
+) {
   const rows = items.map((item) => {
     const unavailable = "ok" in item && !item.ok;
     const text = "text" in item ? item.text : null;
@@ -138,7 +205,9 @@ export async function saveSources(items: Saveable[], owner: { investigationId?: 
       excerpt: text ? text.slice(0, EXCERPT_CHARS) : null,
       via: "firecrawl",
       retrievedAt: new Date(item.retrievedAt),
-      contentHash: text ? createHash("sha256").update(text).digest("hex") : null,
+      contentHash: text
+        ? createHash("sha256").update(text).digest("hex")
+        : null,
       httpStatus: "httpStatus" in item ? item.httpStatus : null,
       unavailable,
     };

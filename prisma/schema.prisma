@@ -1396,11 +1396,17 @@ model KnowledgeDocument {
   source      KnowledgeSource  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   /// "tariff", "directory", "advisory", "report", "page".
   docType     String
+  /// Stable identity inside its source ("tariff:<id>", or the page URL), so a re-sync updates
+  /// the same document instead of adding a copy.
+  externalKey String?
+  /// The citation link: a page URL, or an app path such as /directory?property=slug.
   url         String?
   title       String
   text        String?
   contentHash String
   language    String?
+  /// Extra fields sent to Pinecone next to the text (for example a report's status).
+  metadata    Json?
   districtId  String?
   district    District?        @relation(fields: [districtId], references: [id], onDelete: SetNull)
   reportId    String?
@@ -1418,7 +1424,8 @@ model KnowledgeDocument {
   sources    Source[]
   advisories Advisory[]
 
-  @@unique([sourceId, url])
+  @@unique([sourceId, externalKey])
+  @@index([sourceId, url])
   @@index([sourceId, contentHash])
   @@index([reportId])
 }

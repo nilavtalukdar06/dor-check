@@ -49,7 +49,14 @@ function isPrivateIPv4(host: string) {
 function isPrivateIPv6(host: string) {
   const h = host.replace(/^\[|\]$/g, "").toLowerCase();
   if (!h.includes(":")) return false;
-  return h === "::" || h === "::1" || h.startsWith("fe80") || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("::ffff:");
+  return (
+    h === "::" ||
+    h === "::1" ||
+    h.startsWith("fe80") ||
+    h.startsWith("fc") ||
+    h.startsWith("fd") ||
+    h.startsWith("::ffff:")
+  );
 }
 
 /**
@@ -66,16 +73,25 @@ export function isSafePublicUrl(raw: string) {
   if (u.protocol !== "http:" && u.protocol !== "https:") return false;
   if (u.username || u.password) return false;
   const host = u.hostname.toLowerCase();
-  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".lan")) return false;
+  if (
+    !host ||
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal") ||
+    host.endsWith(".lan")
+  )
+    return false;
   if (isPrivateIPv4(host) || isPrivateIPv6(host)) return false;
   if (!host.includes(".") && !host.includes(":")) return false; // single-label names are internal
   return true;
 }
 
 /** Hits we may use: safe URL and not a denied site. */
-export const isAllowedSource = (url: string) => isSafePublicUrl(url) && !isDeniedDomain(hostOf(url));
+export const isAllowedSource = (url: string) =>
+  isSafePublicUrl(url) && !isDeniedDomain(hostOf(url));
 
-const CHARS_PER_TOKEN = 4;
+export const CHARS_PER_TOKEN = 4;
 
 /**
  * Cut text to roughly `maxTokens` before it reaches a model, preferring to end at a
@@ -87,6 +103,7 @@ export function truncateToBudget(text: string, maxTokens: number) {
   const head = text.slice(0, limit);
   const para = head.lastIndexOf("\n\n");
   const sentence = Math.max(head.lastIndexOf(". "), head.lastIndexOf("| \n"));
-  const cut = para > limit * 0.6 ? para : sentence > limit * 0.6 ? sentence + 1 : limit;
+  const cut =
+    para > limit * 0.6 ? para : sentence > limit * 0.6 ? sentence + 1 : limit;
   return `${head.slice(0, cut).trimEnd()}…`;
 }
