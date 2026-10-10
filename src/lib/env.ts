@@ -16,6 +16,8 @@ export const env = createEnv({
     GOOGLE_GENERATIVE_AI_API_KEY: optional,
     /** Gemini model id for extraction; defaults in server/ai.ts. */
     GEMINI_MODEL: optional,
+    /** Gemini model for the investigation agent (tool use and the verdict); defaults in server/ai.ts. */
+    GEMINI_AGENT_MODEL: optional,
     FIRECRAWL_API_KEY: optional,
     BROWSERBASE_API_KEY: optional,
     BROWSERBASE_PROJECT_ID: optional,

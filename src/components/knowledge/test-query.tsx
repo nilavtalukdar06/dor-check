@@ -19,7 +19,7 @@ export function TestQuery({ disabled }: { disabled?: boolean }) {
   return (
     <section
       aria-label="Test a query"
-      className="flex flex-col gap-3 rounded-xl border bg-card p-5 shadow-xs"
+      className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-5 shadow-xs"
     >
       <h2 className="text-[15px] font-semibold">Test a query</h2>
       <form action={action} className="flex flex-col gap-2">

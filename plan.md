@@ -69,7 +69,9 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 14 Firecrawl research | Done: `server/research.ts` (search, scrape, save sources), URL safety and token-budget rules, retries and timeouts |
 | 15 Stagehand + Browserbase capture and live preview | Done: `server/capture.ts`, private R2 storage with signed links, live-view API and `LiveBrowser`, `/dev/capture` |
 | 16 Evidence vault | Done: `/evidence` grid, filters, URL-driven drawer, upload, download, Download all (zip), delete, and **Capture a page with a realtime live preview** |
-| 17 onwards | Open |
+| 17 Pinecone hosted embeddings | Done: integrated index `llama-text-embed-v2`, `retrieve()`, durable `source/sync.requested` workflow, Knowledge screen with Test a query; 81 chunks indexed |
+| 18 AI SDK agent and tools | Done: `runInvestigationAgent` (tools, evidence ledger, rule-checked typed verdict), saved as `InvestigationResult`, every tool call recorded |
+| 19 onwards | Open |
 
 Decisions that override the original text below:
 
@@ -505,6 +507,16 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 6. Write an Inngest function `source/sync.requested` that crawls with Firecrawl → chunks → upserts records → updates `KnowledgeSource.status`.
 7. Multilingual: `llama-text-embed-v2` is multilingual, so Assamese and Hindi queries can be sent as-is; still translate to English with Sarvam when recall is poor.
 
+**Built (differs from the text above):**
+- **The index already existed** (`dor-check-index`, AWS us-east-1) with the newer schema: one `semantic_text` field named **`text`** (not `chunk_text`), `llama-text-embed-v2`, 1024 dimensions. It is served by the records API (`upsertRecords` / `searchRecords`); metadata fields are stored and filterable. Pinecone SDK is v9. The index is checked by `npm run test:knowledge`.
+- **What is indexed** (all from our own database, `via: INTERNAL`, ids `internal-*`): approved tariffs (`tariffs`), directory places (`directory`), active advisories (`advisories`) and public, visible, non-rejected reports (`reports`). The invented demo sources were replaced.
+- **Privacy:** phone numbers, UPI ids and emails are redacted before indexing, reports are always labelled "(not verified)" and carry no reporter, contact details or web address.
+- **Sync** (`server/knowledge.ts`, Inngest `sync-knowledge-source`): collect, index in batches of 20, prune, finish. It is idempotent: unchanged documents (content hash) are skipped, edited ones are re-embedded and stale chunks deleted, documents that leave the source are removed from Pinecone and the database. Run it with `npm run knowledge:sync` or the Sync button. **Nothing triggers a sync automatically yet**: Phase 22 sends the event when a report is submitted or approved, and Phase 27 adds schedules and "Add source".
+- **`retrieve(query, { types, district, filter, topK, rerank, minScore })`** (`server/retrieve.ts`) searches the namespaces, returns text and source details **from our database** (a vector without a database row is never returned) and can rerank with `bge-reranker-v2-m3`. Hindi queries work as-is.
+- Tariffs with no published page cite the price check for that route (`/price?...`) so every chunk has a link.
+- **Knowledge screen** (`/knowledge`, moderators and admins): stats, sources, per-source Sync, Test a query. Travellers use the index through the agent (Phase 18) and the assistant (Phase 24), not directly.
+- Schema: `KnowledgeDocument.externalKey` and `.metadata`; `(sourceId, url)` is no longer unique (a document's identity is `(sourceId, externalKey)`).
+
 **Done when:** "taxi fare Shillong airport sedan" returns the seeded tariff chunk with its URL.
 
 ---
@@ -527,6 +539,17 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 4. Use `generateObject` for the final step; use `streamText` with `maxSteps` / stop condition while gathering evidence.
 5. Record every tool call into `ToolCall` rows (args, output, ms) from `onStepFinish`.
 6. Keep prompts versioned (`promptVersion`) and store model id with each result.
+
+**Built (differs from the text above):**
+- **AI SDK v7:** `ToolLoopAgent` + `isStepCount`, `generateText` with `Output.object`. Two stages, because it is safer than one: (1) the agent gathers evidence with tools; (2) a separate structured-output call writes the verdict from the evidence. `lookupDirectory` and `findSimilarReports` also run **before** the model (deterministic, by any domain, phone or UPI in the request), so the agent always starts informed.
+- **Evidence ledger:** every tool registers what it read as `S1`, `S2`… (`lib/evidence-ledger.ts`); the traveller's own message is `U1`. **The model cites ids and never writes URLs**, so it cannot invent a source. Pages that could not be read are recorded as unavailable and are never evidence.
+- **Tools** (`server/agent-tools.ts`): `lookupDirectory` (also flags a look-alike domain and records "not found" as a citable finding), `findSimilarReports` (same website/phone/UPI, plus similar by meaning), `retrieveKnowledge`, `comparePrice` (the price engine), `searchWeb`, `scrapePage`, `capturePage` (Stagehand, only when asked for and available). Per-tool call limits; a failing tool returns a plain "could not" and never crashes the loop; every call is written to `ToolCall`.
+- **Rules enforced in code** (`lib/verdict.ts`, `finalizeVerdict`): a signal with no real source is dropped; `VERIFIED_MATCH` needs a cited exact directory match; `SUSPICIOUS` needs a cited risk or caution; confidence is LOW with fewer than two independent sources and at most MEDIUM when only unverified reports back it; accusations ("is a scammer") are rewritten; the summary always ends "This is a signal, not a legal finding."; the 1930 helpline is added when concern is high.
+- **Safety:** web and message text is fenced as untrusted data; a hidden instruction in a message is ignored and treated as a risk signal; contact details never reach the model's output.
+- **Failure:** if Gemini cannot be reached the result is an honest INCONCLUSIVE with the reason (`degraded`), not a crash.
+- **Model:** `GEMINI_AGENT_MODEL`, default the same as extraction (`gemini-3.5-flash-lite`). The full `gemini-3.5-flash` is allowed only about 20 requests a day on Google's free tier, which is a few investigations.
+- `saveAgentResult` (`server/agent-persist.ts`) writes `InvestigationResult`, its `Signal` rows and the cited `Source` rows (with retrieval times); saving again replaces them. Phase 19 calls the agent and this function. `promptVersion` (`2026-10-v1`) and the model id are stored with every result.
+- Checks: 44 unit tests with a scripted mock model and fake tools; `npm run test:agent` runs real Gemini, the real index and the database.
 
 **Done when:** running the agent on the seeded fake URL returns a valid object with at least two sources.
 

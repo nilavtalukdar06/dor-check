@@ -85,7 +85,7 @@ async function KnowledgeView() {
       <div className="grid items-start gap-4 lg:grid-cols-[3fr_2fr]">
         <section
           aria-label="Sources"
-          className="overflow-x-auto rounded-xl border bg-card shadow-xs"
+          className="relative min-w-0 overflow-x-auto rounded-xl border bg-card shadow-xs"
         >
           <table className="w-full min-w-[34rem] text-sm">
             <thead>
