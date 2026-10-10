@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
     authInterrupts: true,
   },
   allowedDevOrigins: ["detached-earthlike-pliable.ngrok-free.dev"],
+  // Stagehand loads its own files at runtime, which bundlers cannot follow.
+  serverExternalPackages: ["@browserbasehq/stagehand", "@browserbasehq/sdk"],
   cacheComponents: true,
   partialPrefetching: true,
   reactCompiler: true,

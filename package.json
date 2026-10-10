@@ -20,11 +20,16 @@
     "inngest:dev": "npx --ignore-scripts=false inngest-cli@latest dev -u http://localhost:3000/api/inngest",
     "test:map": "node --env-file=.env --import tsx scripts/map-check.ts",
     "test:directory-view": "node --env-file=.env --import tsx scripts/directory-check.ts",
-    "test:research": "node --env-file=.env --import tsx scripts/research-check.ts"
+    "test:research": "node --env-file=.env --import tsx scripts/research-check.ts",
+    "test:capture": "node --env-file=.env --import tsx scripts/capture-check.mts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.93",
+    "@aws-sdk/client-s3": "^3.1149.0",
+    "@aws-sdk/s3-request-presigner": "^3.1149.0",
     "@base-ui/react": "^1.9.0",
+    "@browserbasehq/sdk": "^2.21.0",
+    "@browserbasehq/stagehand": "^4.2.0",
     "@clerk/nextjs": "^7.9.14",
     "@clerk/ui": "^1.40.0",
     "@mendable/firecrawl-js": "^4.46.0",

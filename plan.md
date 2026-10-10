@@ -67,7 +67,8 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 12 Directory screen | Done: tabs, search, Verified only, URL-driven drawer, Check a price link |
 | 13 Inngest setup | Done: client, typed events (incl. report, source sync, voice), `/api/inngest`, hello-world with `/dev/inngest`, price workflow |
 | 14 Firecrawl research | Done: `server/research.ts` (search, scrape, save sources), URL safety and token-budget rules, retries and timeouts |
-| 15 onwards | Open |
+| 15 Stagehand + Browserbase capture and live preview | Done: `server/capture.ts`, private R2 storage with signed links, live-view API and `LiveBrowser`, `/dev/capture` |
+| 16 onwards | Open |
 
 Decisions that override the original text below:
 
@@ -444,6 +445,13 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 7. Always `await stagehand.close()` in `finally` so idle sessions are not billed. If capture fails, mark the step FAILED and continue with lower confidence.
 8. Live view URLs are tied to the session, so do not store them. `GET /api/investigations/[id]/live` checks that the caller owns the investigation, calls `sessions.debug`, and returns the URL only while the run is RUNNING.
 
+**Built (differs from the text above):**
+- Stagehand is v4 (`Stagehand.create({ browser, model })`, `browserbase.launch(...)`), not v3. It is ESM-only, so `server/capture.ts` imports it on demand, and `next.config.ts` lists it under `serverExternalPackages`.
+- **Evidence is private.** The R2 bucket stays private; rows store `r2:<key>` in `Evidence.storageUrl` and `server/storage.ts` makes short-lived signed links (`signedUrl`) when an owner views a file. `R2_PUBLIC_URL` is not used.
+- The read-only rule is enforced in code: only `page.goto`, screenshots and `extract` are used (no `act`), unsafe addresses are refused before and after redirects, and the session is always closed in `finally`.
+- Live view: `GET /api/investigations/[id]/live` (owner only, only while the run is RUNNING) and `components/investigation/live-browser.tsx` (read-only sandboxed iframe, falls back gracefully).
+- `/dev/capture` (development only) runs the `capture-page` Inngest function end to end; Phase 19 folds capture into the investigation workflow and Phase 20 shows `LiveBrowser` on the live run screen.
+
 **Done when:** a seeded URL produces a screenshot in R2 and an `Evidence` row, and while it runs the live view URL shows the remote browser moving.
 
 ---
@@ -454,7 +462,7 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 
 **Deliverables:** `/evidence` grid with filters, detail viewer, download, manual upload.
 
-**Tech:** R2 presigned URLs, `react-dropzone`.
+**Tech:** R2 signed links (private bucket), `react-dropzone`.
 
 **How to build**
 1. Grid cards show thumbnail, title, subject, timestamp and type badge.

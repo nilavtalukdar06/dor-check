@@ -28,3 +28,8 @@ export const voiceTranscribeRequested = eventType("voice/transcribe.requested", 
 export const helloRequested = eventType("dev/hello.requested", {
   schema: z.object({ name: z.string().max(60) }),
 });
+
+/** Capture a page for an investigation. Phase 19 folds this into the investigation workflow. */
+export const captureRequested = eventType("capture/page.requested", {
+  schema: z.object({ investigationId: z.string() }),
+});

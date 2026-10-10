@@ -2,10 +2,24 @@
 // Caches only the offline page and immutable static assets. Page HTML, /api
 // and anything authenticated always go to the network, so signed-in data is
 // never stored on the device.
-const VERSION = "v1";
+// Bumping this drops every cache an older worker wrote (activate deletes other ttd- caches).
+const VERSION = "v2";
 const STATIC_CACHE = `ttd-static-${VERSION}`;
 const OFFLINE_URL = "/offline";
 const PRECACHE = ["/icon-192.png", "/icon-512.png"];
+
+// Only files the server marks immutable (production's content-hashed /_next/static
+// files) are ever stored. `next dev` serves the same chunk URLs with changing content
+// and no-store, so a cache-first copy would run stale code against fresh server HTML.
+function isImmutable(res) {
+  return res.ok && /\bimmutable\b/.test(res.headers.get("cache-control") ?? "");
+}
+
+async function cacheImmutable(cache, request) {
+  const res = await fetch(request);
+  if (isImmutable(res)) await cache.put(request, res.clone());
+  return res;
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -20,7 +34,7 @@ self.addEventListener("install", (event) => {
       await cache.put(OFFLINE_URL, res);
       const assets = new Set(html.match(/\/_next\/static\/[^"'\s)\\]+/g) ?? []);
       await Promise.all(
-        [...assets].map((url) => cache.add(url).catch(() => undefined)),
+        [...assets].map((url) => cacheImmutable(cache, url).catch(() => undefined)),
       );
       await self.skipWaiting();
     })(),
@@ -67,9 +81,7 @@ self.addEventListener("fetch", (event) => {
         const cache = await caches.open(STATIC_CACHE);
         const hit = await cache.match(request);
         if (hit) return hit;
-        const res = await fetch(request);
-        if (res.ok) cache.put(request, res.clone());
-        return res;
+        return cacheImmutable(cache, request);
       })(),
     );
   }
