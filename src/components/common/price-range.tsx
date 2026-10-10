@@ -16,6 +16,9 @@ export function PriceRange({
 }) {
   const max = Math.max(quote, high) * 1.05;
   const pct = (n: number) => `${(n / max) * 100}%`;
+  const share = (n: number) => (n / max) * 100;
+  // The right-aligned "quoted" label only works when the quote is the far-right marker.
+  const crowded = share(quote) < 80 || [low, high].some((n) => Math.abs(share(quote) - share(n)) < 14);
   const out = quote < low ? "below" : quote > high ? "above" : "within";
   const tone = out === "within" ? "bg-ok" : out === "below" ? "bg-info" : "bg-danger";
   const toneText =
@@ -46,16 +49,27 @@ export function PriceRange({
       </div>
       <div className="relative h-4 text-xs text-muted-foreground">
         <span className="absolute left-0">Rs 0</span>
-        <span className="absolute -translate-x-1/2" style={{ left: pct(low) }}>
+        <span className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: pct(low) }}>
           {money(low)}
         </span>
-        <span className="absolute -translate-x-1/2" style={{ left: pct(high) }}>
+        <span className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: pct(high) }}>
           {money(high)}
         </span>
-        <span className={cn("absolute right-0 font-medium", toneText)}>
-          {money(quote)} quoted
-        </span>
+        {!crowded ? (
+          <span className={cn("absolute right-0 font-medium", toneText)}>{money(quote)} quoted</span>
+        ) : null}
       </div>
+      {crowded ? (
+        // The quote sits near another label: give it its own row, centred under the marker.
+        <div className="relative h-4 text-xs">
+          <span
+            className={cn("absolute font-medium whitespace-nowrap", toneText)}
+            style={{ left: `clamp(48px, ${pct(quote)}, calc(100% - 48px))`, transform: "translateX(-50%)" }}
+          >
+            {money(quote)} quoted
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

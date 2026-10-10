@@ -1,28 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { priceCheckSchema as bodySchema } from "@/lib/price-schema";
 import { lookupPrice } from "@/server/price";
-
-const text = z.string().trim().min(1).max(120);
-
-const bodySchema = z
-  .object({
-    service: z.enum(["TAXI", "STAY", "GUIDE", "TOUR"]),
-    quotedInr: z.number().int().positive().max(10_000_000),
-    origin: text.optional(),
-    destination: text.optional(),
-    vehicle: text.optional(),
-    district: text.optional(),
-    qualifier: text.optional(),
-  })
-  .superRefine((v, ctx) => {
-    if (v.service === "TAXI") {
-      if (!v.origin) ctx.addIssue({ code: "custom", path: ["origin"], message: "Enter where the trip starts" });
-      if (!v.destination) ctx.addIssue({ code: "custom", path: ["destination"], message: "Enter where the trip ends" });
-    } else if (!v.district) {
-      ctx.addIssue({ code: "custom", path: ["district"], message: "Choose a district" });
-    }
-  });
 
 /** Compare a quote with the tariff range. Stateless: nothing is saved here. */
 export async function POST(req: Request) {

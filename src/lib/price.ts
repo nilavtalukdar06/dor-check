@@ -85,7 +85,7 @@ const tokens = (value: string) => new Set(normalizeText(value).split("-").filter
  * Score how well free text names a place. 1 = same words, lower = one side contains the
  * other (fewer extra words is better), 0 = no match.
  */
-function nameScore(input: string, names: string[] = []) {
+export function nameScore(input: string, names: string[] = []) {
   const a = tokens(input);
   if (a.size === 0) return 0;
   let best = 0;
