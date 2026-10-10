@@ -1,5 +1,6 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 
+// Route protection lives in the (app) layout via auth.protect().
 export default clerkMiddleware();
 
 export const config = {

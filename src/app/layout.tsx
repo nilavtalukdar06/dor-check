@@ -1,8 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ClerkProvider } from "@clerk/nextjs";
+import { PwaRegister } from "@/components/pwa/pwa-register";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,6 +25,20 @@ export const metadata: Metadata = {
     "Travel smarter with DorCheck, an AI-powered price intelligence platform for Northeast India. Check taxi fares, verify parking fees, compare tour packages, and explore local price benchmarks before you pay.",
 
   applicationName: "DorCheck",
+
+  appleWebApp: {
+    capable: true,
+    title: "Trap Detector",
+    statusBarStyle: "default",
+  },
+
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
 
   keywords: [
     "DorCheck",
@@ -67,6 +82,13 @@ export const metadata: Metadata = {
   },
 };
 
+export const viewport: Viewport = {
+  themeColor: "#ffffff",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <ClerkProvider>
@@ -80,6 +102,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             suppressHydrationWarning={true}
           >
             {children}
+            <PwaRegister />
           </body>
         </TooltipProvider>
       </html>
