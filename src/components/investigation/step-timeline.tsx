@@ -12,6 +12,8 @@ export type TimelineStep = {
   duration?: string;
   events?: string[];
   tools?: string[];
+  /** One line saying what the step found or is doing. */
+  note?: string;
 };
 
 function StepIcon({ status }: { status: StepStatus }) {
@@ -52,7 +54,8 @@ export function StepTimeline({
                 {s.duration ?? s.status}
               </span>
             </div>
-            {(s.events?.length || s.tools?.length) && (
+            {s.note ? <p className="text-xs text-muted-foreground">{s.note}</p> : null}
+            {(s.events?.length ?? 0) + (s.tools?.length ?? 0) > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {s.events?.map((e) => (
                   <ToolChip key={e} kind="event">
@@ -63,7 +66,7 @@ export function StepTimeline({
                   <ToolChip key={t}>{t}</ToolChip>
                 ))}
               </div>
-            )}
+            ) : null}
           </div>
         </li>
       ))}

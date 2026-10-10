@@ -1,44 +1,49 @@
 import { Suspense } from "react";
-import { rs } from "@/lib/format";
-import { PriceCheckClient, type PriceFormValues } from "@/components/price/price-check-client";
+import { formValuesFrom } from "@/components/price/form-values";
+import { PriceCheckClient } from "@/components/price/price-check-client";
 import { PriceResultPanel } from "@/components/price/price-result";
+import { ResearchProgress } from "@/components/price/research-progress";
 import { EmptyResult } from "@/components/price/result-placeholders";
 import { CardSkeleton, LoadingState } from "@/components/shell/loading";
 import { PageHeader } from "@/components/shell/page-header";
+import { rs } from "@/lib/format";
+import { getPricePage } from "@/server/price-check";
 import { getPriceFormOptions } from "@/server/price-options";
-import { getPriceCheck, type PriceCheckView } from "@/server/price-check";
 import { getCurrentUser } from "@/server/users";
 
 export const metadata = { title: "Price check" };
 
-function formDefaults(view: PriceCheckView): Partial<PriceFormValues> {
-  return {
-    service: view.service,
-    origin: view.origin.name,
-    destination: view.destination?.name ?? "",
-    vehicle: view.vehicle ?? "SEDAN",
-    districtId: view.districtId ?? "",
-    qualifier: view.qualifier ?? "",
-    quoted: rs(view.quotedInr),
-  };
-}
+// Web research can take up to about 45 seconds after the response is sent.
+export const maxDuration = 60;
 
 async function PriceCheckLoader({ searchParams }: Pick<PageProps<"/price">, "searchParams">) {
   const { check } = await searchParams;
   const id = typeof check === "string" ? check : null;
 
   const [options, user] = await Promise.all([getPriceFormOptions(), getCurrentUser()]);
-  const view = id && user ? await getPriceCheck(user.id, id) : null;
+  const page = id && user ? await getPricePage(user.id, id) : null;
+  const quoted = page?.input ? rs(page.input.quotedInr) : "";
 
   return (
-    // Keyed by the saved check so the form re-initialises when another one is opened.
+    // Keyed by the check and its status so the form refills when another check opens.
     <PriceCheckClient
-      key={view?.id ?? "new"}
+      key={page ? `${page.id}:${page.status}` : "new"}
       options={options}
-      defaults={view ? formDefaults(view) : undefined}
-      currentId={view?.id ?? null}
+      defaults={page ? formValuesFrom(page.input, quoted) : undefined}
+      currentId={page?.id ?? null}
     >
-      {view ? <PriceResultPanel view={view} /> : <EmptyResult notFound={!!id} />}
+      {!page ? (
+        <EmptyResult notFound={!!id} />
+      ) : page.status === "completed" ? (
+        <PriceResultPanel view={page.view} />
+      ) : (
+        <ResearchProgress
+          id={page.id}
+          title={page.title}
+          steps={page.steps}
+          failed={page.status === "failed"}
+        />
+      )}
     </PriceCheckClient>
   );
 }
@@ -60,7 +65,7 @@ export default function PricePage({ searchParams }: PageProps<"/price">) {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Price check"
-        description="Compare a quote with the demo benchmark range for the same route or service."
+        description="Compare a quote for any taxi route, stay, guide or tour with known tariffs and published prices."
       />
       <Suspense fallback={<PriceFallback />}>
         <PriceCheckLoader searchParams={searchParams} />

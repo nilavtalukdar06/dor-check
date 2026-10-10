@@ -14,6 +14,8 @@ export const env = createEnv({
     INNGEST_EVENT_KEY: optional,
     INNGEST_SIGNING_KEY: optional,
     GOOGLE_GENERATIVE_AI_API_KEY: optional,
+    /** Gemini model id for extraction; defaults in server/ai.ts. */
+    GEMINI_MODEL: optional,
     FIRECRAWL_API_KEY: optional,
     BROWSERBASE_API_KEY: optional,
     BROWSERBASE_PROJECT_ID: optional,
@@ -36,7 +38,10 @@ export const env = createEnv({
   client: {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(1),
     NEXT_PUBLIC_STREAM_KEY: optional,
+    NEXT_PUBLIC_MAPBOX_TOKEN: optional,
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,
+  // Unit tests import server modules without real secrets.
+  skipValidation: !!process.env.SKIP_ENV_VALIDATION,
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkPrice, classifyQuote, findBenchmark, type Benchmark } from "./price";
+import { checkPrice, classifyQuote, estimateTaxiRange, findBenchmark, type Benchmark } from "./price";
 import { routeKey } from "./route-key";
 
 const on = new Date("2026-10-10T00:00:00Z");
@@ -227,6 +227,7 @@ describe("checkPrice end to end", () => {
       benchmarkId: "air-shillong-sedan",
       match: "exact",
       unit: "PER_TRIP",
+      reversed: false,
     });
     expect(r.effectiveOn).toEqual(effective);
   });
@@ -246,5 +247,53 @@ describe("checkPrice end to end", () => {
       match: "none",
       reason: "no_benchmark",
     });
+  });
+});
+
+describe("reverse routes", () => {
+  const base = { service: "TAXI" as const, quotedInr: 2600, asOf: on };
+  it("Shillong to Guwahati airport uses the airport to Shillong tariff", () => {
+    const r = checkPrice({ ...base, origin: "Shillong, Police Bazar", destination: "Guwahati airport", vehicle: "Sedan" }, benchmarks);
+    expect(r).toMatchObject({ band: "WITHIN_RANGE", benchmarkId: "air-shillong-sedan", reversed: true });
+  });
+  it("fuzzy reverse ('Shillong' to 'Guwahati airport')", () => {
+    const r = findBenchmark({ ...base, origin: "Shillong", destination: "Guwahati airport", vehicle: "Sedan" }, benchmarks);
+    expect(r.benchmark?.id).toBe("air-shillong-sedan");
+    expect(r.match === "none" ? null : r.reversed).toBe(true);
+  });
+  it("forward matches are not marked reversed", () => {
+    const r = checkPrice({ ...base, origin: "Guwahati airport", destination: "Shillong, Police Bazar", vehicle: "Sedan" }, benchmarks);
+    expect(r.reversed).toBe(false);
+  });
+});
+
+describe("estimateTaxiRange", () => {
+  const rows: Benchmark[] = [
+    taxi("a", "A", "B", "SEDAN", 2200, 3000, { distanceKm: 100 }),
+    taxi("b", "A", "C", "SEDAN", 500, 800, { distanceKm: 20 }),
+    taxi("c", "A", "D", "SEDAN", 1800, 2600, { distanceKm: 60 }),
+    taxi("d", "A", "B", "SUV", 3200, 4200, { distanceKm: 100 }),
+    taxi("s", "A", "B", "SHARED", 400, 700, { distanceKm: 100, unit: "PER_PERSON" }),
+  ];
+  it("fits median per-km rates and widens by 15%", () => {
+    // sedan low/km: 22, 25, 30 -> 25 ; high/km: 30, 40, 43.3 -> 40
+    const e = estimateTaxiRange(150, "Sedan", rows)!;
+    expect(e.perKmLow).toBe(25);
+    expect(e.perKmHigh).toBe(40);
+    expect(e.lowInr).toBe(3200); // 150*25*0.85 = 3187.5 -> 3200
+    expect(e.highInr).toBe(6900); // 150*40*1.15 = 6900
+    expect(e.basedOn).toBe(3);
+  });
+  it("never goes below the cheapest curated fare", () => {
+    const e = estimateTaxiRange(3, "Sedan", rows)!;
+    expect(e.lowInr).toBe(500);
+    expect(e.highInr).toBe(800);
+  });
+  it("falls back to sedan rates when the vehicle has too few rows", () => {
+    expect(estimateTaxiRange(150, "SUV", rows)?.perKmLow).toBe(25);
+  });
+  it("ignores per-person tariffs and bad distances", () => {
+    expect(estimateTaxiRange(0, "Sedan", rows)).toBeNull();
+    expect(estimateTaxiRange(100, "Sedan", rows.filter((r) => r.unit !== "PER_TRIP"))).toBeNull();
   });
 });

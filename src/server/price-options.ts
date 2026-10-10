@@ -1,10 +1,11 @@
 import { cacheLife, cacheTag } from "next/cache";
 import prisma from "@/lib/prisma";
+import type { PlaceSuggestion } from "./geocoding";
 
 export type PriceFormOptions = {
-  places: { id: string; name: string; kind: string; district: string }[];
-  districts: { id: string; name: string; state: string }[];
-  /** Room types, durations and packages that have a tariff, per service. */
+  /** Shown before the user types: the curated places. */
+  popularPlaces: PlaceSuggestion[];
+  /** Room types, durations and packages we hold tariffs for (free text is allowed too). */
   qualifiers: Record<"STAY" | "GUIDE" | "TOUR", string[]>;
 };
 
@@ -14,14 +15,14 @@ export async function getPriceFormOptions(): Promise<PriceFormOptions> {
   cacheLife("hours");
   cacheTag("reference-data");
 
-  const [places, districts, tariffs] = await Promise.all([
+  const [places, tariffs] = await Promise.all([
     prisma.place.findMany({
+      where: { source: "seed" },
       orderBy: { name: "asc" },
-      select: { id: true, name: true, kind: true, district: { select: { name: true } } },
+      select: { id: true, name: true, kind: true, lat: true, lng: true, district: { select: { name: true } } },
     }),
-    prisma.district.findMany({ orderBy: [{ stateCode: "asc" }, { name: "asc" }], select: { id: true, name: true, stateCode: true } }),
     prisma.tariffBenchmark.findMany({
-      where: { isActive: true, serviceType: { in: ["STAY", "GUIDE", "TOUR"] }, qualifier: { not: null } },
+      where: { isActive: true, serviceType: { in: ["STAY", "GUIDE", "TOUR"] }, qualifier: { not: null }, reviewStatus: { not: "rejected" } },
       select: { serviceType: true, qualifier: true },
       distinct: ["serviceType", "qualifier"],
       orderBy: { qualifier: "asc" },
@@ -35,8 +36,16 @@ export async function getPriceFormOptions(): Promise<PriceFormOptions> {
     }
   }
   return {
-    places: places.map((p) => ({ id: p.id, name: p.name, kind: p.kind, district: p.district.name })),
-    districts: districts.map((d) => ({ id: d.id, name: d.name, state: d.stateCode === "AS" ? "Assam" : "Meghalaya" })),
+    popularPlaces: places.map((p) => ({
+      key: `seed:${p.id}`,
+      name: p.name,
+      detail: p.district?.name ?? "",
+      source: "seed",
+      placeId: p.id,
+      lat: p.lat,
+      lng: p.lng,
+      kind: p.kind,
+    })),
     qualifiers,
   };
 }

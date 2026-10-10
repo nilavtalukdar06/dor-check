@@ -55,7 +55,8 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 7 Roles and protected routes | Done: `requireRole`, moderator-only pages, 403 page |
 | 8 Seed data and directory | Done: `npm run db:seed` / `db:reset` (about 10 s), moderator directory actions, tested |
 | 9 Tariff benchmarks and price engine | Done: `lib/price.ts` (40 unit tests), `/api/price`, tested against seeded data |
-| 10 Price check screen | Done: form for all four services, result, route map, tested in a browser session |
+| 10 Price check screen | Done, then replaced by Price check v2 (below) |
+| 10b Price check v2 | Done: any place via Mapbox, reverse routes, live web research with cited sources, distance estimate, Mapbox 3D maps |
 | 11 onwards | Open |
 
 Decisions that override the original text below:
@@ -78,6 +79,24 @@ Every route that reads data ships with a loading state. No blank screens, no bar
 4. Long jobs (agent run, crawl, transcription) show the step name and the live timeline, never just a spinner.
 5. Empty results use the shared empty-state component with a reason and a next action ("No reports yet. Submit the first one.").
 6. Shared pieces live in `components/shell`: `LoadingState` (spinner plus text), `PageSkeleton`, `CardSkeleton`, `TableSkeleton`, `ListSkeleton`.
+
+## Price check v2 (replaces the Phase 10 lookup)
+
+A price check now works for any taxi route, stay, guide or tour. Every number keeps a source.
+
+1. **Places:** curated places first, otherwise Mapbox (Geocoding v6 for towns, Search Box for airports and sights), bounded to north-east India. Found places are saved as `Place` rows (`source: "mapbox"`).
+2. **Route:** Mapbox Directions with live traffic; a straight-line estimate (labelled "approx") if it fails.
+3. **Range, first hit wins:**
+   - Curated tariff (High confidence). Tariffs match in both directions.
+   - Saved research (Medium), valid for 30 days, flagged `reviewStatus: "pending"` for the Phase 27 moderator queue.
+   - Live research (Medium): Firecrawl search, Gemini extracts each price with the sentence it came from, code checks the sentence is on the page, promotional "starting from" prices are dropped, and at least 3 prices from 3 different sites must agree. Saved as a researched tariff with its sources.
+   - Distance estimate for taxis (Low): per-km rates fitted from curated tariffs, labelled as an estimate, never "overpriced".
+   - Otherwise "No reference", with the reason.
+4. **Durable workflow (Inngest):** the server action only creates the check and sends the `price/check.requested` event. The `run-price-check` function (`src/inngest/functions/price-check.ts`) runs the steps: resolve places, route, find tariff, then (if needed) research gate, search pages, read each page in parallel (`read-page-N`), combine, save research, estimate, and a closing `finalize`. Every step retries on its own, a failing page is skipped instead of failing the run, and a per-user concurrency limit of 2 protects Firecrawl and Gemini. The step logic lives in `src/server/price-pipeline.ts` as plain JSON-in, JSON-out functions that also write `RunStep` and `RunEvent` rows for reloads.
+5. **Live progress (Inngest Realtime):** each step publishes to the `price-run:<investigationId>` channel (`src/inngest/channels.ts`); the browser subscribes with `useRealtime` using a token minted by a server action that checks ownership. A slow `router.refresh()` every 6 s is only a fallback if a message is missed.
+6. **Maps:** Mapbox GL with the Standard style, 3D terrain and a pitched view, in `components/map/mapbox-map.tsx`. Leaflet is removed; Phase 11 builds on the same component.
+7. **Model:** Gemini via the AI SDK (`GEMINI_MODEL`, default `gemini-3.5-flash-lite`, chosen for speed and free-tier limits).
+8. **Tests:** `npm test` (unit), `npm run test:price-live` (live workflow; needs `npm run dev` and `npm run inngest:dev`; uses credits).
 
 ---
 
@@ -105,7 +124,7 @@ Every route that reads data ships with a loading state. No blank screens, no bar
 | Stream | getstream.io → Chat → app dashboard | API key + secret | `NEXT_PUBLIC_STREAM_KEY`, `STREAM_SECRET` |
 | Sarvam AI | dashboard.sarvam.ai | API subscription key | `SARVAM_API_KEY` |
 | File storage | Cloudflare R2 (S3 API) | bucket, public URL, S3 access key and secret, account id | `R2_BUCKET`, `R2_PUBLIC_URL`, `S3_ACCESS_KEY_ID`, `S3_ACCESS_KEY_SECRET`, `R2_ACCOUNT_ID` |
-| Maps (optional) | none for Leaflet + OpenStreetMap; openrouteservice.org for routing | free key | `ORS_API_KEY` |
+| Maps | mapbox.com → Access tokens (public token, URL-restricted) | public token | `NEXT_PUBLIC_MAPBOX_TOKEN` |
 
 **How to proceed**
 1. Sign up in the order above; use the free tiers.
@@ -298,7 +317,7 @@ Every route that reads data ships with a loading state. No blank screens, no bar
 
 **Deliverables:** form, result card with range slider visual, route mini-map, "Why this range" card, Read aloud button (wired in Phase 25).
 
-**Tech:** React Hook Form + Zod, Leaflet (Phase 11), optional OpenRouteService.
+**Tech:** React Hook Form + Zod, Mapbox (superseded by Price check v2).
 
 **Key (optional):** `ORS_API_KEY` for distance and route geometry; otherwise estimate with the haversine formula and label it "approx".
 
@@ -319,10 +338,10 @@ Every route that reads data ships with a loading state. No blank screens, no bar
 
 **Deliverables:** `/map` with layers, search, side list, mobile bottom sheet.
 
-**Tech:** `react-leaflet` + OpenStreetMap tiles (no key). Alternative: MapLibre with a free MapTiler key.
+**Tech:** Mapbox GL (`components/map/mapbox-map.tsx`, Standard style, 3D terrain), token `NEXT_PUBLIC_MAPBOX_TOKEN`.
 
 **How to build**
-1. Load the map with `dynamic(..., { ssr: false })`.
+1. Load the shared `MapboxMap` with `dynamic(..., { ssr: false })` (see `MapboxMapLazy`).
 2. Marker colors: red report, green verified property, amber tariff dispute, blue tariff board.
 3. Query `/api/map?bbox=...&layers=...` and return GeoJSON-like rows.
 4. Click a pin → show card with link to the report or property.
@@ -349,9 +368,11 @@ Every route that reads data ships with a loading state. No blank screens, no bar
 
 ---
 
-## Phase 13 — Inngest setup
+## Phase 13 — Inngest setup (done early, with Price check v2)
 
 **Goal:** durable background workflows run locally and in production.
+
+**Status:** the client (`src/inngest/client.ts`), typed event (`events.ts`), Realtime channel (`channels.ts`), `/api/inngest` route and the `run-price-check` workflow exist. Run `npm run inngest:dev` next to `npm run dev`. Still to do here: `report/submitted`, `source/sync.requested`, `voice/transcribe.requested`, and syncing the app in Inngest Cloud after deploy.
 
 **Deliverables:** Inngest client, `/api/inngest` route, a hello-world function, events typed.
 
@@ -758,7 +779,8 @@ R2_PUBLIC_URL=
 R2_ACCOUNT_ID=
 S3_ACCESS_KEY_ID=
 S3_ACCESS_KEY_SECRET=
-ORS_API_KEY=                  # optional
+NEXT_PUBLIC_MAPBOX_TOKEN=
+GEMINI_MODEL=                 # optional, default gemini-3.5-flash-lite
 UPSTASH_REDIS_REST_URL=       # optional
 UPSTASH_REDIS_REST_TOKEN=     # optional
 ```

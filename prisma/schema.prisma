@@ -466,17 +466,23 @@ model District {
 
 /// Named points used by price checks: airports, stations, bazars, sights, taxi stands.
 model Place {
-  id         String   @id @default(cuid())
-  slug       String   @unique
+  id         String    @id @default(cuid())
+  slug       String    @unique
   name       String
   /// "AIRPORT", "RAILWAY", "BUS_STAND", "CITY", "LOCALITY", "SIGHT", "TAXI_STAND".
   kind       String
-  districtId String
-  district   District @relation(fields: [districtId], references: [id])
+  districtId String?
+  district   District? @relation(fields: [districtId], references: [id], onDelete: SetNull)
   lat        Float
   lng        Float
   aliases    String[]
-  isDemo     Boolean  @default(false)
+  /// Mapbox feature id for places found by geocoding; null for seeded places.
+  mapboxId   String?   @unique
+  /// "seed" or "mapbox".
+  source     String    @default("seed")
+  /// "Bomdila, Arunachal Pradesh, India".
+  fullName   String?
+  isDemo     Boolean   @default(false)
 
   tariffBoards     TariffBoard[]
   originBenchmarks TariffBenchmark[] @relation("BenchmarkOrigin")
@@ -614,6 +620,14 @@ model TariffBenchmark {
   sourceUrl          String?
   effectiveOn        DateTime         @db.Date
   expiresOn          DateTime?        @db.Date
+  /// "curated" (fare boards, official sheets), "researched" (live web research) or "estimated".
+  basis              String           @default("curated")
+  confidence         Level?
+  /// How many independent prices the researched range was built from.
+  sampleSize         Int?
+  /// "approved", "pending" (researched, awaiting a moderator) or "rejected".
+  reviewStatus       String           @default("approved")
+  researchedAt       DateTime?
   isActive           Boolean          @default(true)
   isDemo             Boolean          @default(false)
   createdById        String?
@@ -622,6 +636,7 @@ model TariffBenchmark {
 
   priceChecks PriceCheck[]
   documents   KnowledgeDocument[]
+  sources     Source[]
 
   @@unique([routeKey, effectiveOn])
   @@index([serviceType, routeKey])
@@ -851,6 +866,14 @@ model Source {
   report              Report?            @relation(fields: [reportId], references: [id], onDelete: SetNull)
   knowledgeDocumentId String?
   knowledgeDocument   KnowledgeDocument? @relation(fields: [knowledgeDocumentId], references: [id], onDelete: SetNull)
+  /// Researched tariff this source backs (price evidence).
+  benchmarkId         String?
+  benchmark           TariffBenchmark?   @relation(fields: [benchmarkId], references: [id], onDelete: Cascade)
+  /// Price stated on the page, in rupees, and its unit ("PER_TRIP", "PER_KM"...).
+  valueInr            Int?
+  unit                String?
+  /// Verbatim sentence the price was taken from (checked against the page text).
+  quote               String?
   kind                SourceKind
   url                 String?
   title               String
@@ -871,6 +894,7 @@ model Source {
   signals Signal[]
 
   @@index([investigationId])
+  @@index([benchmarkId])
 }
 
 model PriceCheck {
@@ -907,6 +931,12 @@ model PriceCheck {
   communityReports    Int              @default(0)
   communityWindowDays Int              @default(90)
   explanation         String?
+  /// How the range was found: "curated", "researched", "estimated"; null for no reference.
+  basis               String?
+  confidence          Level?
+  sampleSize          Int?
+  /// The tariff was written for the opposite direction.
+  reversed            Boolean          @default(false)
   createdAt           DateTime         @default(now())
 }
 

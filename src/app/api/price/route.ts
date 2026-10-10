@@ -23,6 +23,8 @@ export async function POST(req: Request) {
     );
   }
 
-  const result = await lookupPrice(parsed.data);
+    const { location, district, ...rest } = parsed.data;
+  const { benchmarks: _unused, ...result } = await lookupPrice({ ...rest, district: location ?? district });
+  void _unused;
   return NextResponse.json(result);
 }

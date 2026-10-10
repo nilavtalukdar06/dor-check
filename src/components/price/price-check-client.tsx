@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 import { Controller, useForm, useWatch, type Resolver } from "react-hook-form";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -30,34 +30,9 @@ import {
 } from "@/lib/price-schema";
 import { comparePriceAction } from "@/app/(app)/price/actions";
 import type { PriceFormOptions } from "@/server/price-options";
-import { PlaceInput } from "./place-input";
+import { emptyValues, type PriceFormValues } from "./form-values";
+import { PlaceInput, type PlacePick } from "./place-input";
 import { ResultSkeleton } from "./result-placeholders";
-
-export type PriceFormValues = {
-  service: PriceService;
-  origin: string;
-  originPlaceId: string;
-  destination: string;
-  destinationPlaceId: string;
-  vehicle: string;
-  districtId: string;
-  qualifier: string;
-  quoted: string;
-};
-
-const emptyValues: PriceFormValues = {
-  service: "TAXI",
-  origin: "",
-  originPlaceId: "",
-  destination: "",
-  destinationPlaceId: "",
-  vehicle: "SEDAN",
-  districtId: "",
-  qualifier: "",
-  quoted: "",
-};
-
-const NO_QUALIFIER = "__none";
 
 const blank = (s: string) => (s.trim() === "" ? undefined : s.trim());
 
@@ -68,18 +43,22 @@ function toPayload(v: PriceFormValues): Partial<PriceCheckInput> & { quotedInr: 
     quotedInr: parseRupees(v.quoted),
     origin: taxi ? blank(v.origin) : undefined,
     originPlaceId: taxi ? blank(v.originPlaceId) : undefined,
+    originGeo: taxi ? (v.originGeo ?? undefined) : undefined,
     destination: taxi ? blank(v.destination) : undefined,
     destinationPlaceId: taxi ? blank(v.destinationPlaceId) : undefined,
+    destinationGeo: taxi ? (v.destinationGeo ?? undefined) : undefined,
     vehicle: taxi ? blank(v.vehicle) : undefined,
-    districtId: !taxi ? blank(v.districtId) : undefined,
-    qualifier: !taxi && v.qualifier !== NO_QUALIFIER ? blank(v.qualifier) : undefined,
+    location: !taxi ? blank(v.location) : undefined,
+    locationPlaceId: !taxi ? blank(v.locationPlaceId) : undefined,
+    locationGeo: !taxi ? (v.locationGeo ?? undefined) : undefined,
+    qualifier: !taxi ? blank(v.qualifier) : undefined,
   };
 }
 
 const fieldOf: Record<string, keyof PriceFormValues> = {
   quotedInr: "quoted",
-  district: "districtId",
-  districtId: "districtId",
+  district: "location",
+  districtId: "location",
 };
 
 /** Validate with the same zod schema the server uses, mapped onto form fields. */
@@ -148,6 +127,20 @@ export function PriceCheckClient({
   });
 
   const qualifiers = service === "TAXI" ? [] : options.qualifiers[service];
+  const qualifierListId = useId();
+  /** Keep the picked place's id or coordinates alongside the text; typing clears them. */
+  const setPick = (prefix: "origin" | "destination" | "location") => (pick?: PlacePick) => {
+    if (prefix === "origin") {
+      setValue("originPlaceId", pick?.placeId ?? "");
+      setValue("originGeo", pick?.geo ?? null);
+    } else if (prefix === "destination") {
+      setValue("destinationPlaceId", pick?.placeId ?? "");
+      setValue("destinationGeo", pick?.geo ?? null);
+    } else {
+      setValue("locationPlaceId", pick?.placeId ?? "");
+      setValue("locationGeo", pick?.geo ?? null);
+    }
+  };
   const quoteUnit = service === "STAY" ? UNIT_LABELS.PER_NIGHT : service === "GUIDE" ? UNIT_LABELS.PER_DAY : service === "TOUR" ? UNIT_LABELS.PER_PERSON : null;
 
   return (
@@ -180,12 +173,12 @@ export function PriceCheckClient({
                   <PlaceInput
                     id="origin"
                     value={field.value}
-                    places={options.places}
+                    popular={options.popularPlaces}
                     placeholder="Guwahati airport"
                     invalid={!!errors.origin}
-                    onChange={(text, placeId) => {
+                    onChange={(text, pick) => {
                       field.onChange(text);
-                      setValue("originPlaceId", placeId ?? "");
+                      setPick("origin")(pick);
                     }}
                   />
                 )}
@@ -201,12 +194,12 @@ export function PriceCheckClient({
                   <PlaceInput
                     id="destination"
                     value={field.value}
-                    places={options.places}
-                    placeholder="Shillong, Police Bazar"
+                    popular={options.popularPlaces}
+                    placeholder="Shillong, or any town"
                     invalid={!!errors.destination}
-                    onChange={(text, placeId) => {
+                    onChange={(text, pick) => {
                       field.onChange(text);
-                      setValue("destinationPlaceId", placeId ?? "");
+                      setPick("destination")(pick);
                     }}
                   />
                 )}
@@ -215,37 +208,26 @@ export function PriceCheckClient({
             </Field>
           </>
         ) : (
-          <Field data-invalid={!!errors.districtId}>
-            <FieldLabel htmlFor="district">District</FieldLabel>
+          <Field data-invalid={!!errors.location}>
+            <FieldLabel htmlFor="location">Where</FieldLabel>
             <Controller
               control={control}
-              name="districtId"
+              name="location"
               render={({ field }) => (
-                <Select
-                  value={field.value || null}
-                  onValueChange={(v) => field.onChange(v ?? "")}
-                  items={options.districts.map((d) => ({ value: d.id, label: d.name }))}
-                >
-                  <SelectTrigger id="district" className="h-10 w-full" aria-invalid={!!errors.districtId}>
-                    <SelectValue placeholder="Choose a district" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(["Assam", "Meghalaya"] as const).map((state) => (
-                      <SelectGroup key={state}>
-                        {options.districts
-                          .filter((d) => d.state === state)
-                          .map((d) => (
-                            <SelectItem key={d.id} value={d.id}>
-                              {d.name}
-                            </SelectItem>
-                          ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <PlaceInput
+                  id="location"
+                  value={field.value}
+                  popular={options.popularPlaces}
+                  placeholder="Cherrapunji, Ziro, Majuli…"
+                  invalid={!!errors.location}
+                  onChange={(text, pick) => {
+                    field.onChange(text);
+                    setPick("location")(pick);
+                  }}
+                />
               )}
             />
-            {errors.districtId ? <FieldError>{errors.districtId.message}</FieldError> : null}
+            {errors.location ? <FieldError>{errors.location.message}</FieldError> : null}
           </Field>
         )}
 
@@ -285,25 +267,21 @@ export function PriceCheckClient({
                 control={control}
                 name="qualifier"
                 render={({ field }) => (
-                  <Select
-                    value={field.value || NO_QUALIFIER}
-                    onValueChange={(v) => field.onChange(v ?? "")}
-                    items={[{ value: NO_QUALIFIER, label: "Not sure" }, ...qualifiers.map((q) => ({ value: q, label: q }))]}
-                  >
-                    <SelectTrigger id="qualifier" className="h-10 w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value={NO_QUALIFIER}>Not sure</SelectItem>
-                        {qualifiers.map((q) => (
-                          <SelectItem key={q} value={q}>
-                            {q}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+                  <>
+                    <Input
+                      id="qualifier"
+                      list={qualifierListId}
+                      placeholder={service === "STAY" ? "Standard room" : service === "GUIDE" ? "Half day" : "2 nights"}
+                      className="h-10"
+                      autoComplete="off"
+                      {...field}
+                    />
+                    <datalist id={qualifierListId}>
+                      {qualifiers.map((q) => (
+                        <option key={q} value={q} />
+                      ))}
+                    </datalist>
+                  </>
                 )}
               />
             </Field>

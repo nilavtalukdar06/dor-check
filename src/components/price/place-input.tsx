@@ -1,29 +1,29 @@
 "use client";
 
-import { MapPinIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { LoaderCircleIcon, MapPinIcon } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
+import type { PickedGeoInput } from "@/lib/price-schema";
 import { cn } from "@/lib/utils";
+import type { PlaceSuggestion } from "@/server/geocoding";
 
-export type PlaceOption = { id: string; name: string; kind: string; district: string };
-
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+export type PlacePick = { placeId?: string; geo?: PickedGeoInput };
 
 /**
- * Text box with suggestions from the directory's places. Typing anything else is fine:
- * the engine falls back to matching the words you typed.
+ * Place box with live suggestions: curated places first, then Mapbox (towns, localities,
+ * airports, sights). Free text is fine too; the server geocodes it.
  */
 export function PlaceInput({
   value,
   onChange,
-  places,
+  popular,
   placeholder,
   invalid,
   id,
 }: {
   value: string;
-  onChange: (text: string, placeId?: string) => void;
-  places: PlaceOption[];
+  onChange: (text: string, pick?: PlacePick) => void;
+  popular: PlaceSuggestion[];
   placeholder?: string;
   invalid?: boolean;
   id?: string;
@@ -31,12 +31,49 @@ export function PlaceInput({
   const listId = useId();
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [results, setResults] = useState<PlaceSuggestion[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abort = useRef<AbortController | null>(null);
 
-  const q = norm(value);
-  const matches = (q ? places.filter((p) => norm(`${p.name} ${p.district}`).includes(q)) : places).slice(0, 7);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+    abort.current?.abort();
+  }, []);
 
-  const pick = (p: PlaceOption) => {
-    onChange(p.name, p.id);
+  const search = (q: string) => {
+    if (timer.current) clearTimeout(timer.current);
+    abort.current?.abort();
+    if (q.trim().length < 2) {
+      setResults(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    timer.current = setTimeout(async () => {
+      const controller = new AbortController();
+      abort.current = controller;
+      try {
+        const res = await fetch(`/api/places/search?q=${encodeURIComponent(q)}`, { signal: controller.signal });
+        const json = (await res.json()) as { results?: PlaceSuggestion[] };
+        setResults(json.results ?? []);
+      } catch {
+        // aborted or offline: keep the free text
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, 250);
+  };
+
+  const items = (results ?? popular).slice(0, 8);
+
+  const pick = (s: PlaceSuggestion) => {
+    onChange(
+      s.name,
+      s.source === "seed"
+        ? { placeId: s.placeId }
+        : { geo: { mapboxId: s.mapboxId!, name: s.name, detail: s.detail, lat: s.lat, lng: s.lng, kind: s.kind } },
+    );
     setOpen(false);
   };
 
@@ -49,58 +86,58 @@ export function PlaceInput({
         placeholder={placeholder}
         autoComplete="off"
         role="combobox"
-        aria-expanded={open && matches.length > 0}
+        aria-expanded={open && items.length > 0}
         aria-controls={listId}
         aria-autocomplete="list"
         aria-invalid={invalid || undefined}
-        className="h-10 pl-9"
+        className="h-10 pr-9 pl-9"
         onChange={(e) => {
-          onChange(e.target.value, undefined);
+          onChange(e.target.value);
           setActive(0);
           setOpen(true);
+          search(e.target.value);
         }}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         onKeyDown={(e) => {
-          if (!open || matches.length === 0) return;
+          if (!open || items.length === 0) return;
           if (e.key === "ArrowDown") {
             e.preventDefault();
-            setActive((i) => (i + 1) % matches.length);
+            setActive((i) => (i + 1) % items.length);
           } else if (e.key === "ArrowUp") {
             e.preventDefault();
-            setActive((i) => (i - 1 + matches.length) % matches.length);
+            setActive((i) => (i - 1 + items.length) % items.length);
           } else if (e.key === "Enter") {
             e.preventDefault();
-            pick(matches[active] ?? matches[0]);
+            pick(items[active] ?? items[0]);
           } else if (e.key === "Escape") {
             setOpen(false);
           }
         }}
       />
-      {open && matches.length > 0 ? (
-        <ul
-          id={listId}
-          role="listbox"
-          className="absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-lg border bg-popover p-1 text-sm shadow-md"
-        >
-          {matches.map((p, i) => (
+      {loading ? (
+        <LoaderCircleIcon aria-label="Searching places" className="absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+      ) : null}
+      {open && items.length > 0 ? (
+        <ul id={listId} role="listbox" className="absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-lg border bg-popover p-1 text-sm shadow-md">
+          {items.map((s, i) => (
             <li
-              key={p.id}
+              key={s.key}
               role="option"
               aria-selected={i === active}
               // mousedown, not click: the input would lose focus and close the list first
               onMouseDown={(e) => {
                 e.preventDefault();
-                pick(p);
+                pick(s);
               }}
               onMouseEnter={() => setActive(i)}
-              className={cn(
-                "flex cursor-pointer items-center justify-between gap-3 rounded-md px-2.5 py-2",
-                i === active && "bg-muted",
-              )}
+              className={cn("flex cursor-pointer flex-col gap-0.5 rounded-md px-2.5 py-2", i === active && "bg-muted")}
             >
-              <span>{p.name}</span>
-              <span className="text-xs text-muted-foreground">{p.district}</span>
+              <span className="flex items-center justify-between gap-3">
+                <span>{s.name}</span>
+                {s.source === "seed" ? <span className="text-[11px] text-ok">Known tariffs</span> : null}
+              </span>
+              {s.detail ? <span className="truncate text-xs text-muted-foreground">{s.detail}</span> : null}
             </li>
           ))}
         </ul>
