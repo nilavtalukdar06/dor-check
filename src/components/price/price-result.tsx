@@ -1,8 +1,7 @@
-import { ArrowLeftRightIcon, AudioLinesIcon, ExternalLinkIcon, ShieldCheckIcon } from "lucide-react";
-import Link from "next/link";
+import { ArrowLeftRightIcon, ExternalLinkIcon, ShieldCheckIcon } from "lucide-react";
 import { PriceRange } from "@/components/common/price-range";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { ListenButton } from "@/components/voice/listen-button";
 import { formatDate, formatDuration, rs } from "@/lib/format";
 import { BASIS_LABEL, bandCopy, bandSubtitle } from "@/lib/price-present";
 import { UNIT_LABELS } from "@/lib/price-schema";
@@ -135,11 +134,7 @@ function WhyCard({ view }: { view: PriceCheckView }) {
         ) : null}
       </div>
       <div>
-        {/* Wired to speech in the Read aloud phase. */}
-        <Button variant="outline" size="sm" className="h-8 gap-2 shadow-xs" nativeButton={false} render={<Link href={`/voice?priceCheck=${view.id}`} />}>
-          <AudioLinesIcon data-icon="inline-start" />
-          Read aloud
-        </Button>
+        {view.explanation ? <ListenButton text={view.explanation} title={`Price check · ${view.band === "NO_REFERENCE" ? "no reference" : "fair range"}`} /> : null}
       </div>
     </section>
   );

@@ -1,179 +1,250 @@
 ---
 name: text-to-speech
-description: >-
-  Write correct Sarvam Bulbul TTS code — bulbul:v4-flash persona speaker IDs
-  (voice_language_style), REST, HTTP stream, WebSocket, pronunciation
-  dictionaries, and v3/v4 traps (short names rejected on v4, param ranges).
-  Use this skill when generating speech in an app with Python or JS/TS. For
-  live TTS in chat via MCP, use sarvam-mcp instead.
-license: Apache-2.0
-metadata:
-  author: sarvam-ai
-  version: "4.1"
+description: Convert text to speech using ElevenLabs voice AI. Use when generating audio from text, creating voiceovers, building voice apps, or synthesizing speech in 90+ languages.
+license: MIT
+compatibility: Requires internet access and an ElevenLabs API key (ELEVENLABS_API_KEY).
+metadata: {"openclaw": {"requires": {"env": ["ELEVENLABS_API_KEY"]}, "primaryEnv": "ELEVENLABS_API_KEY"}}
 ---
 
-# Text-to-Speech — Bulbul
+# ElevenLabs Text-to-Speech
 
-> Live in-chat TTS → [sarvam-mcp](../sarvam-mcp) (`sarvam_tools_tts_*`). This skill = **SDK code**.
+Generate natural speech from text - supports 90+ languages, multiple models for quality vs latency tradeoffs. Examples default to `eleven_v4`, the latest and highest-quality model.
 
-> [!IMPORTANT]
-> Auth: `api-subscription-key` header — NOT `Authorization: Bearer`. Base URL: `https://api.sarvam.ai` (NOT `/v1` — that prefix is only for the OpenAI-compatible chat endpoint)
-> SDK floor for the code below: Python `sarvamai>=0.1.29`, JS `sarvamai@>=1.1.8`. On older versions the TTS param is `target_language_code` — see Gotchas.
+> **Setup:** See [Installation Guide](references/installation.md). For JavaScript, use `@elevenlabs/*` packages only.
 
-## Model
+## Quick Start
 
-`bulbul:v4-flash` — latest, use this for new integrations. Same REST / HTTP stream / WebSocket contract as v3. **200+ persona voices (222 IDs).**
-
-`bulbul:v3` — what the API uses when `model` is omitted. Short names (`shubh`, `priya`). Still the right model for Malayalam and Odia, which have no v4 personas yet.
-
-## Speakers (v4 Flash)
-
-IDs are lowercase `voice_language_style`: `aparna_hi_customer`, `simran_en_customer`, `shubh_enhi_ads`. Omit `speaker` and the default is `shubh_enhi_ads`. v2/v3 short names (`shubh`, `priya`, `ishita`, `anushka`) return 400.
-
-The middle token is a language tag (`hi`, `en`, `bn`, `gu`, `kn`, `mr`, `pa`, `ta`, `te`) or `enhi` for English–Hindi code-mix. Use an `_enhi_` persona when one utterance is genuinely mixed; a few English loanwords in Hindi script do not need it.
-
-`language_code` still takes the usual BCP-47 values (`hi-IN`, `en-IN`, … including `ml-IN` and `od-IN`). There are no `ml` or `od` persona IDs — for those languages set `model="bulbul:v3"` and a v3 short name.
-
-| Use case | Hindi | English |
-|----------|-------|---------|
-| Customer care | `aparna_hi_customer` | `aparna_en_companion` |
-| Sales | `aparna_hi_customer`, `shubh_hi_customer` | `simran_en_sales` |
-| Collections | `simran_hi_recovery` | `shubh_en_recovery` |
-| Hinglish (one utterance) | `simran_enhi_customer` | — |
-
-Do not copy `speaker="ishita"` from the Voices “generate your own sample” snippet — that is a v3 short name and fails on v4-flash.
-
-**Coverage by language** (live-verified 2026-10-06; one working persona each — pick others from the live list):
-
-| Language | Example persona | Language | Example persona |
-|----------|-----------------|----------|-----------------|
-| `en-IN` | `simran_en_customer`, `sunny_en_social` | `mr-IN` | `ishita_mr_conversational` |
-| `hi-IN` | `aparna_hi_customer`, `shubh_hi_customer` | `gu-IN` | `bhavik_gu_conversation` |
-| `hi-IN` (Hinglish) | `shubh_enhi_ads` (the default) | `kn-IN` | `chaitra_kn_conversation` |
-| `bn-IN` | `roopa_bn_conversational`, `arnab_bn_conversation` | `pa-IN` | `anand_pa_conversation` |
-| `ta-IN` | `gokul_ta_narration`, `aravind_ta_ads` | `te-IN` | `kavitha_te_conversation` |
-
-**The roster changes.** Sarvam renamed voices on 2026-10-06 (`bappa_bn_conversation` → `arnab_bn_conversation`, `vetri_ta_ads`/`vetri_ta_suspense` → `aravind_ta_*`), and the old IDs now 400. Do not hardcode IDs from memory or old blog posts. An unknown speaker returns 400 with the full live list, so the list is one bad request away. The API also lists 2 Assamese (`_as_`) personas that the docs catalog does not.
-
-## Quick Start (Python)
+### Python
 
 ```python
-from sarvamai import SarvamAI
-from sarvamai.play import save
+from elevenlabs import ElevenLabs
 
-client = SarvamAI()
+client = ElevenLabs()
 
-response = client.text_to_speech.convert(
-    text="नमस्ते, आप कैसे हैं?",
-    language_code="hi-IN",
-    model="bulbul:v4-flash",
-    speaker="aparna_hi_customer",
-    enable_preprocessing=True,
+audio = client.text_to_speech.convert(
+    text="Hello, welcome to ElevenLabs!",
+    voice_id="JBFqnCBsd6RMkjVDRZzb",  # George
+    model_id="eleven_v4"
 )
-save(response, "output.wav")
 
-# HTTP Stream (lower latency, binary audio)
-chunks = []
-for chunk in client.text_to_speech.convert_stream(
-    text="Hello from Sarvam AI",
-    language_code="en-IN",
-    model="bulbul:v4-flash",
-    speaker="simran_en_customer",
-    output_audio_codec="wav",
-):
-    chunks.append(chunk)
-audio = b"".join(chunks)
+with open("output.mp3", "wb") as f:
+    for chunk in audio:
+        f.write(chunk)
 ```
 
-## Quick Start (JavaScript/TypeScript)
+### JavaScript
 
-```typescript
-import { SarvamAIClient } from "sarvamai";
-import { writeFile } from "fs/promises";
+```javascript
+import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
+import { createWriteStream } from "fs";
+import { Readable } from "stream";
 
-const client = new SarvamAIClient({ apiSubscriptionKey: "YOUR_SARVAM_API_KEY" });
-
-// REST
-const response = await client.textToSpeech.convert({
-    text: "नमस्ते, आप कैसे हैं?",
-    language_code: "hi-IN",
-    model: "bulbul:v4-flash",
-    speaker: "aparna_hi_customer",
-    enable_preprocessing: true,
+const client = new ElevenLabsClient();
+const audio = await client.textToSpeech.convert("JBFqnCBsd6RMkjVDRZzb", {
+  text: "Hello, welcome to ElevenLabs!",
+  modelId: "eleven_v4",
 });
-
-// HTTP Stream (lower latency, returns BinaryResponse)
-const streamResponse = await client.textToSpeech.convertStream({
-    text: "Hello from Sarvam AI",
-    language_code: "en-IN",
-    model: "bulbul:v4-flash",
-    speaker: "simran_en_customer",
-    output_audio_codec: "wav",
-});
-const bytes = await streamResponse.bytes();
-await writeFile("output.wav", bytes);
+// convert() returns a web ReadableStream — bridge it to a Node stream to write to disk
+Readable.fromWeb(audio).pipe(createWriteStream("output.mp3"));
 ```
 
-## WebSocket Streaming
+### CLI
+
+Use `say` to play text immediately with the default voice and `eleven_v3` model:
+
+```bash
+elevenlabs say "Hello!"
+```
+
+Pipe text into `say` when another command produces the input:
+
+```bash
+echo "The build finished successfully." | elevenlabs say
+```
+
+Use the API command when you need to set request parameters directly:
+
+```bash
+elevenlabs text-to-speech convert --voice-id JBFqnCBsd6RMkjVDRZzb \
+  --text "Hello!" --model-id eleven_v4 --output output.mp3
+```
+
+The CLI reads `ELEVENLABS_API_KEY` from the environment automatically.
+
+## Models
+
+| Model ID | Languages | Latency | Best For |
+|----------|-----------|---------|----------|
+| `eleven_v4` | 90+ | Standard | **Default.** Highest quality, emotional range, audio tags, voice cloning accuracy |
+| `eleven_v4_turbo` | 90+ | ~100ms | Real-time v4 quality for agents and interactive apps (via [Text to Dialogue WebSocket](references/streaming.md#eleven-v4-turbo-websocket)) |
+| `eleven_flash_v2_5` | 32 | ~75ms | Lowest latency, lowest cost, `stream-input` WebSocket |
+| `eleven_flash_v2` | English | ~75ms | English-only, lowest latency |
+| `eleven_multilingual_v2` | 29 | Standard | Previous generation; most stable on very long-form generations |
+| `eleven_v3` | 70+ | Standard | Previous generation expressive model |
+
+`eleven_turbo_v2_5` and `eleven_turbo_v2` are superseded by the Flash models (same output, lower latency) — use `eleven_flash_v2_5` / `eleven_flash_v2` instead.
+
+**Eleven v4 notes:** supports only `stability` and `similarity_boost` voice settings (no `style` or `speed`), does not support SSML, and is not available on the `stream-input` TTS WebSocket. Direct delivery with audio tags such as `[whispers]`, `[laughs]`, `[sarcastic]`.
+
+## Voice IDs
+
+Use pre-made voices or create custom voices in the dashboard.
+
+**Popular voices:**
+- `JBFqnCBsd6RMkjVDRZzb` - George (male, narrative)
+- `EXAVITQu4vr4xnSDxMaL` - Sarah (female, soft)
+- `onwK4e9ZLuTAKqWW03F9` - Daniel (male, authoritative)
+- `XB0fDUnXU5powFXDhCwa` - Charlotte (female, conversational)
 
 ```python
-import asyncio
-from sarvamai import AsyncSarvamAI
-
-async def tts_stream():
-    client = AsyncSarvamAI()
-    async with client.text_to_speech_streaming.connect(model="bulbul:v4-flash") as ws:
-        await ws.configure(
-            target_language_code="hi-IN",
-            speaker="aparna_hi_customer",
-            output_audio_codec="wav",
-        )
-        await ws.convert("Your text here")
-        await ws.flush()
-        async for message in ws:
-            pass  # base64 audio chunks
-
-asyncio.run(tts_stream())
+voices = client.voices.get_all()
+for voice in voices.voices:
+    print(f"{voice.voice_id}: {voice.name}")
 ```
 
-## Character Limits
+## Voice Settings
 
-| Method | Max Text |
-|--------|----------|
-| **REST** (`convert`) | 2,500 chars |
-| **HTTP Stream** (`convert_stream`) | 3,500 chars |
-| **Legacy `inputs` array** (raw REST) | 500 chars per item — send `text` instead to get the 2,500 limit |
-| **WebSocket** | 2,500 chars/msg (keep <500 for lowest latency; send many messages per connection) |
+Fine-tune how the voice sounds:
 
-## Gotchas
+- **Stability**: How consistent the voice stays. Lower values = more emotional range and variation, but can sound unstable. Higher = steady, predictable delivery.
+- **Similarity boost**: How closely to match the original voice sample. Higher values sound more like the original but may amplify audio artifacts.
+- **Style**: Exaggerates the voice's unique style characteristics (v2/v3 models; not supported on Eleven v4).
+- **Speed**: Speech speed multiplier (v2/v3 models; not supported on Eleven v4).
+- **Speaker boost**: Post-processing that enhances clarity and voice similarity.
 
-| Gotcha | Detail |
-|--------|--------|
-| **Set `model` or you get v3** | Omitting `model` selects `bulbul:v3`. v3 short names then work; v4 persona IDs do not. New code sets `model="bulbul:v4-flash"`. |
-| **v3/v2 short names on v4** | `shubh`, `priya`, `ishita`, `anushka`, etc. are rejected. Use `voice_language_style`. Unknown IDs 400 with the live speaker list. |
-| **`language_code` is version-gated** | Python `>=0.1.29` and JS `>=1.1.8` (both 2026-08-03) take `language_code`; earlier versions take `target_language_code`. Hard rename — no alias, no deprecation shim, and the JSON body key changed too, so the wrong name raises `TypeError` before any request goes out. Check with `pip show sarvamai` / `npm ls sarvamai` if you hit that. |
-| **WebSocket was not renamed** | Python `ws.configure()` still takes `target_language_code` (mapped to `language_code` on the wire). Docs that pass `language_code=` into `ws.configure()` raise `TypeError`. JS `configureConnection()` takes `language_code`. |
-| **JS method name** | `client.textToSpeech.convert({...})` and `.convertStream({...})` — camelCase. Stream returns `BinaryResponse` with `.stream()`, `.bytes()`, `.blob()`. |
-| **`pitch` / `loudness` ranges** | `pitch` −0.5–0.5 (default 0), `loudness` 0.1–2.5 (default 1), `pace` 0.5–2.0. Out-of-range values return 400. Bulbul v3 used to reject `pitch` / `loudness`; as of 2026-10-06 it accepts them too (live-verified). v2-only ranges in the model-page limits table do not apply. |
-| **Streaming codec default** | HTTP stream and WebSocket do not default to WAV. Set `output_audio_codec` (`wav` or `mp3`; also `flac` / `aac` on HTTP stream). `opus` can appear in the schema and currently errors on `/text-to-speech`. |
-| **Sample rate** | `speech_sample_rate` 8000, 16000, 24000 and 48000 verified on v4-flash REST (the returned WAV matches the requested rate). |
-| **Sample rate >24kHz** | 32kHz, 44.1kHz, 48kHz only via REST, not streaming. Omitted → 22050 Hz. |
-| **REST response** | Base64-encoded audio in `response.audios[0]`. Use `sarvamai.play.save()` or `base64.b64decode()`. Writing the raw base64 string to disk is not playable audio. |
-| **Speaker must match model** | The mismatch fails both ways: a v3 short name on `bulbul:v4-flash` and a v4 persona on `bulbul:v3` both return 400. Pair `model` and `speaker` explicitly. |
-| **No SSML** | SSML markup is NOT supported. Use `pace` (and on v4, `pitch` / `loudness`) plus sentence-boundary chunking. |
-| **Use native script** | Romanized Indic input ("Aapka order confirm ho gaya hai") degrades quality. Write Indic words in native script; keep English loanwords in Latin (`"आपका order confirm हो गया है"`). With `enable_preprocessing=true`, do not hand-expand numbers, dates, or currency. |
-| **`ml-IN` / `od-IN` have no v4 personas** | Codes are accepted. The catalog has no Malayalam or Odia IDs. Use `bulbul:v3` for those languages. |
-| **Pronunciation dictionary** | Pass `dict_id` on v4-flash the same way as v3 (10 dicts/user, 100 words/dict). Create via Python `client.pronunciation_dictionary.create(file=f)`. JS SDK upload is broken (missing multipart `Content-Type`) — use raw `fetch` + `FormData` with an explicit `Blob` type. The pronunciation-page limits row that says “v3 only” is stale; the examples on that page send `dict_id` with `bulbul:v4-flash`. |
+```python
+from elevenlabs import VoiceSettings
 
-## Full Docs
+audio = client.text_to_speech.convert(
+    text="Customize my voice settings.",
+    voice_id="JBFqnCBsd6RMkjVDRZzb",
+    model_id="eleven_v4",
+    voice_settings=VoiceSettings(
+        stability=0.5,          # Lower = more expressive, higher = more consistent
+        similarity_boost=0.75,  # Higher = closer to the reference voice
+    )
+)
+```
 
-Fetch the voice catalog, ranked picks, streaming protocol, and codec options from:
+## Language Selection
 
-- **https://docs.sarvam.ai/llms.txt** — comprehensive docs index
-- [Bulbul models](https://docs.sarvam.ai/api/getting-started/models/bulbul)
-- [Voices (v4 catalog + v3 previews)](https://docs.sarvam.ai/api/api-guides-tutorials/text-to-speech/voices)
-- [Bulbul v4 Flash best practices](https://docs.sarvam.ai/api/api-guides-tutorials/text-to-speech/best-practice-guide-for-bulbul-v-4-flash)
-- [TTS Overview](https://docs.sarvam.ai/api/api-guides-tutorials/text-to-speech/overview)
-- [HTTP Stream](https://docs.sarvam.ai/api/api-guides-tutorials/text-to-speech/streaming-api/http-stream)
-- [Pronunciation Dictionary](https://docs.sarvam.ai/api/api-guides-tutorials/text-to-speech/pronunciation-dictionary)
-- [Rate Limits](https://docs.sarvam.ai/api/ratelimits)
+Use `language_code` with models that support language enforcement to guide pronunciation and text normalization. Unsupported language codes are ignored, and `language_code` is not supported on `eleven_multilingual_v2`.
+
+```python
+audio = client.text_to_speech.convert(
+    text="Bonjour, comment allez-vous?",
+    voice_id="JBFqnCBsd6RMkjVDRZzb",
+    model_id="eleven_v4",
+    language_code="fr"  # ISO 639-1 code
+)
+```
+
+## Text Normalization
+
+Controls how numbers, dates, and abbreviations are converted to spoken words. For example, "01/15/2026" becomes "January fifteenth, twenty twenty-six":
+
+- `"auto"` (default): Model decides based on context
+- `"on"`: Always normalize (use when you want natural speech)
+- `"off"`: Speak literally (use when you want "zero one slash one five...")
+
+```python
+audio = client.text_to_speech.convert(
+    text="Call 1-800-555-0123 on 01/15/2026",
+    voice_id="JBFqnCBsd6RMkjVDRZzb",
+    model_id="eleven_v4",
+    apply_text_normalization="on"
+)
+```
+
+## Request Stitching
+
+When generating long audio in multiple requests, the audio can have pops, unnatural pauses, or tone shifts at the boundaries. Request stitching solves this by letting each request know what comes before/after it:
+
+```python
+# First request
+audio1 = client.text_to_speech.convert(
+    text="This is the first part.",
+    voice_id="JBFqnCBsd6RMkjVDRZzb",
+    model_id="eleven_v4",
+    next_text="And this continues the story."
+)
+
+# Second request using previous context
+audio2 = client.text_to_speech.convert(
+    text="And this continues the story.",
+    voice_id="JBFqnCBsd6RMkjVDRZzb",
+    model_id="eleven_v4",
+    previous_text="This is the first part."
+)
+```
+
+## Output Formats
+
+| Format | Description |
+|--------|-------------|
+| `mp3_44100_128` | MP3 44.1kHz 128kbps (default) - compressed, good for web/apps |
+| `mp3_44100_192` | MP3 44.1kHz 192kbps (Creator+) - higher quality compressed |
+| `mp3_44100_64` | MP3 44.1kHz 64kbps - lower quality, smaller files |
+| `mp3_22050_32` | MP3 22.05kHz 32kbps - smallest MP3 files |
+| `pcm_16000` | Raw PCM 16kHz - use for real-time processing |
+| `pcm_22050` | Raw PCM 22.05kHz |
+| `pcm_24000` | Raw PCM 24kHz - good balance for streaming |
+| `pcm_44100` | Raw PCM 44.1kHz (Pro+) - CD quality |
+| `pcm_48000` | Raw PCM 48kHz (Pro+) - highest quality |
+| `ulaw_8000` | μ-law 8kHz - standard for phone systems (Twilio, telephony) |
+| `alaw_8000` | A-law 8kHz - telephony (alternative to μ-law) |
+| `opus_48000_64` | Opus 48kHz 64kbps - efficient streaming codec |
+| `wav_44100` | WAV 44.1kHz - uncompressed with headers |
+
+## Streaming
+
+Use the `stream` method to receive audio chunks as they're generated:
+
+```python
+audio_stream = client.text_to_speech.stream(
+    text="This text will be streamed as audio.",
+    voice_id="JBFqnCBsd6RMkjVDRZzb",
+    model_id="eleven_v4"
+)
+
+for chunk in audio_stream:
+    play_audio(chunk)
+```
+
+For real-time apps where latency matters most, use `eleven_v4_turbo` (~100ms) over the Text to Dialogue WebSocket, or `eleven_flash_v2_5` (~75ms) over HTTP streaming or the `stream-input` WebSocket. See [references/streaming.md](references/streaming.md).
+
+## Error Handling
+
+```python
+try:
+    audio = client.text_to_speech.convert(
+        text="Generate speech",
+        voice_id="invalid-voice-id",
+        model_id="eleven_v4"
+    )
+except Exception as e:
+    print(f"API error: {e}")
+```
+
+Common errors:
+- **401**: Invalid API key
+- **422**: Invalid parameters (check voice_id, model_id)
+- **429**: Rate limit exceeded
+
+## Tracking Costs
+
+Monitor character usage via response headers (`x-character-count`, `request-id`):
+
+```python
+response = client.text_to_speech.convert.with_raw_response(
+    text="Hello!", voice_id="JBFqnCBsd6RMkjVDRZzb", model_id="eleven_v4"
+)
+audio = response.parse()
+print(f"Characters used: {response.headers.get('x-character-count')}")
+```
+
+## References
+
+- [Installation Guide](references/installation.md)
+- [Streaming Audio](references/streaming.md)
+- [Voice Settings](references/voice-settings.md)

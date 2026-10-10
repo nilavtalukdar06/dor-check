@@ -26,7 +26,10 @@ export const env = createEnv({
     PINECONE_API_KEY: optional,
     PINECONE_INDEX: optional,
     STREAM_SECRET: optional,
-    SARVAM_API_KEY: optional,
+    /** ElevenLabs: text to speech and speech to text. */
+    ELEVENLABS_API_KEY: optional,
+    /** Speech model; defaults in lib/voice.ts. */
+    ELEVENLABS_TTS_MODEL: optional,
     R2_TOKEN: optional,
     S3_ACCESS_KEY_ID: optional,
     S3_ACCESS_KEY_SECRET: optional,

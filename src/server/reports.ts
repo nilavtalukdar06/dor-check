@@ -115,6 +115,8 @@ export async function createReport(user: { id: string }, data: ReportData): Prom
         },
         select: { id: true },
       });
+      // The recording this report was spoken from stays with it (private to the reporter and moderators).
+      if (data.voiceJobId) await prisma.voiceJob.updateMany({ where: { id: data.voiceJobId, userId: user.id, kind: "STT", reportId: null }, data: { reportId: report.id } });
       try {
         await inngest.send(reportSubmitted.create({ reportId: report.id, reference }, { id: `report-${report.id}` }));
       } catch {

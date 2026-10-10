@@ -12,6 +12,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { VoiceReport, type VoiceReportResult } from "@/components/reports/voice-report";
 import { CATEGORY_LABEL, KIND_LABEL, REPORT_CATEGORIES, REPORT_KINDS, reportInputSchema, type ReportInput } from "@/lib/reports";
 import { MAX_UPLOAD_BYTES } from "@/lib/evidence";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,7 @@ export function ReportForm({ options, popularPlaces }: { options: ReportFormOpti
       evidenceIds: p?.evidenceIds ?? [],
       isAnonymous: true,
       investigationId: p?.investigationId,
+      voiceJobId: undefined,
     },
   });
   const { register, control, handleSubmit, setValue, watch, setError, formState: { errors, isSubmitting } } = form;
@@ -65,6 +67,7 @@ export function ReportForm({ options, popularPlaces }: { options: ReportFormOpti
   const [uploaded, setUploaded] = useState<{ id: string; title: string; preview: string }[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [spoken, setSpoken] = useState(false);
   const previews = useRef<string[]>([]);
   useEffect(() => () => previews.current.forEach((u) => URL.revokeObjectURL(u)), []);
 
@@ -105,6 +108,19 @@ export function ReportForm({ options, popularPlaces }: { options: ReportFormOpti
     },
   });
 
+  // A spoken report: the transcript and its English version go into the description to be edited.
+  const onVoice = (r: VoiceReportResult) => {
+    const both = r.translated ? `${r.transcript}\n\n${r.translated}` : r.transcript;
+    // Keep the original words if both do not fit.
+    const text = both.length <= 2000 ? both : r.transcript.slice(0, 2000);
+    setValue("description", text, { shouldValidate: true, shouldDirty: true });
+    setValue("voiceJobId", r.id);
+    setSpoken(true);
+    // The title is the first sentence of the English text.
+    const english = ((r.translated ?? r.transcript).replace(/\s+/g, " ").trim().split(/(?<=[.!?।])\s/)[0] ?? "").trim();
+    if (!form.getValues("summary")) setValue("summary", english.length > 100 ? `${english.slice(0, 97).trimEnd()}...` : english.length >= 8 ? english : "Spoken report", { shouldValidate: true });
+  };
+
   const submit = handleSubmit(async (values) => {
     setFormError(null);
     // On success the server action redirects to the new report; it only returns when something is wrong.
@@ -138,7 +154,9 @@ export function ReportForm({ options, popularPlaces }: { options: ReportFormOpti
           <Input id="summary" {...register("summary")} maxLength={120} className="h-10" aria-invalid={!!errors.summary} />
         </Field>
 
-        <Field label="What happened" htmlFor="description" error={errors.description?.message} hint="Stick to facts: what you were asked, what you paid, what happened next. Please leave out your own phone number.">
+        <VoiceReport onResult={onVoice} />
+
+        <Field label={spoken ? "Transcript (editable)" : "What happened"} htmlFor="description" error={errors.description?.message} hint="Stick to facts: what you were asked, what you paid, what happened next. Please leave out your own phone number.">
           <Textarea id="description" {...register("description")} rows={6} maxLength={2000} placeholder="Describe what happened" aria-invalid={!!errors.description} />
         </Field>
 

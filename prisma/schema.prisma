@@ -981,7 +981,7 @@ model Evidence {
   /// Extracted page text for EXTRACT items.
   textContent      String?
   capturedAt       DateTime       @default(now())
-  /// "browserbase", "firecrawl", "user", "sarvam".
+  /// "browserbase", "firecrawl", "user", "elevenlabs".
   capturedBy       String
   browserSessionId String?
   sha256           String?
@@ -1306,6 +1306,9 @@ model VoiceJob {
   pace             Float?
   pitch            Float?
   loudness         Float?
+  /// ElevenLabs voice settings (pace above is its speed). pitch and loudness are no longer written.
+  stability        Float?
+  similarity       Float?
   model            String?
   /// hash(text, language, voice, pace...) to reuse audio instead of paying twice.
   cacheKey         String?
@@ -1338,7 +1341,7 @@ model VoiceJob {
   @@index([cacheKey])
 }
 
-/// Cache for Sarvam translations.
+/// Cache for translations (Gemini).
 model Translation {
   id             String   @id @default(cuid())
   /// sha256 of the source text.

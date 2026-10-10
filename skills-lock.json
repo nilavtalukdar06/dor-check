@@ -458,10 +458,10 @@
       "computedHash": "da388f632cd83783c02967446e21941c9ee8291ccb43ba74c23f7d4e9b7c298c"
     },
     "speech-to-text": {
-      "source": "sarvamai/skills",
+      "source": "elevenlabs/skills",
       "sourceType": "github",
       "skillPath": "speech-to-text/SKILL.md",
-      "computedHash": "dcc8361a0c1391fa70a55304ebdde6eb9c4bf325e014d0badd046180add1c345"
+      "computedHash": "06f18ad079255645ff81e3f2926a8e7dde145a6e6d6b0df06348cb2ba22d409d"
     },
     "stream": {
       "source": "getstream/agent-skills",
@@ -530,10 +530,10 @@
       "computedHash": "0005611d8e1fde80ca7b4decf0f30b3a4c674c78102b5a39ffc1e27a26c63acf"
     },
     "text-to-speech": {
-      "source": "sarvamai/skills",
+      "source": "elevenlabs/skills",
       "sourceType": "github",
       "skillPath": "text-to-speech/SKILL.md",
-      "computedHash": "05410c869bca26f1a77249b001814789d7376ffe9b48aaa0549a2e7a85e5f020"
+      "computedHash": "bb182b4e3a864bdc7f04c0401dfd45b2b5c6f144281d5e6ddb7da0c00b7de3ad"
     },
     "ui-test": {
       "source": "browserbase/skills",

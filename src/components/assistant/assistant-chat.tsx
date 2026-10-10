@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { BrowserCard, type BrowseFacts } from "@/components/assistant/browser-card";
 import { RunCard } from "@/components/assistant/run-card";
+import { ListenButton } from "@/components/voice/listen-button";
 import { RichText } from "@/components/assistant/rich-text";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -252,6 +253,9 @@ function AssistantMessage({ message }: { message: UIMessage }) {
       {text ? (
         <div className="max-w-[92%] rounded-2xl border bg-soft px-4 py-3 text-[15px] leading-relaxed" data-testid="assistant-text">
           <RichText text={text} />
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <ListenButton text={text} title={`Assistant · ${text.slice(0, 30)}`} label="Listen" className="rounded-full bg-background" />
+          </div>
           {chips.length || citations.length ? (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {chips.map((c) => (

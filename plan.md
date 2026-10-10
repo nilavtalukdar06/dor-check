@@ -1,6 +1,6 @@
 # Travel Trap Detector — Phase-by-Phase Build Guide (31 phases)
 
-Stack: Next.js + React + Tailwind + shadcn/ui · Clerk · Inngest · Vercel AI SDK (Gemini) · Firecrawl · Stagehand on Browserbase · Pinecone (hosted `llama-text-embed-v2`) · Stream · Sarvam AI · Cloudflare R2 · Postgres + Prisma.
+Stack: Next.js + React + Tailwind + shadcn/ui · Clerk · Inngest · Vercel AI SDK (Gemini) · Firecrawl · Stagehand on Browserbase · Pinecone (hosted `llama-text-embed-v2`) · Stream · ElevenLabs · Cloudflare R2 · Postgres + Prisma.
 UI reference: the sidebar design canvas (28 screens). Schema reference: `schema.prisma`.
 
 How to use this guide: do phases in order. Each phase is 1–3 hours of focused work, ends in something you can click, and has a "Done when" check. Phases marked **[MVP]** are the minimum to demo; the rest are the "missing features" layer. Commit after every phase.
@@ -34,7 +34,7 @@ How to use this guide: do phases in order. Each phase is 1–3 hours of focused 
 | 22 | Community reports | Community | 3 h |
 | 23 | Stream discussion and official findings | Community | 3 h |
 | 24 | Assistant chat | AI | 3 h |
-| 25 | Sarvam read-aloud | Voice | 3 h |
+| 25 | Read-aloud (ElevenLabs) | Voice | 3 h |
 | 26 | Voice reporting and translation | Voice | 3 h |
 | 27 | Moderation, workflows and knowledge admin | Admin | 4 h |
 | 28 | Settings, usage, billing, notifications | Account | 3 h |
@@ -140,7 +140,7 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 | Browserbase | browserbase.com → Settings | API key + project ID | `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` |
 | Pinecone | app.pinecone.io → API keys; create an integrated index with `llama-text-embed-v2` | API key, index name | `PINECONE_API_KEY`, `PINECONE_INDEX` |
 | Stream | getstream.io → Chat → app dashboard | API key + secret | `NEXT_PUBLIC_STREAM_KEY`, `STREAM_SECRET` |
-| Sarvam AI | dashboard.sarvam.ai | API subscription key | `SARVAM_API_KEY` |
+| ElevenLabs | elevenlabs.io | API key (Text to Speech and Speech to Text permissions) | `ELEVENLABS_API_KEY` |
 | File storage | Cloudflare R2 (S3 API) | bucket, public URL, S3 access key and secret, account id | `R2_BUCKET`, `R2_PUBLIC_URL`, `S3_ACCESS_KEY_ID`, `S3_ACCESS_KEY_SECRET`, `R2_ACCOUNT_ID` |
 | Maps | mapbox.com → Access tokens (public token, URL-restricted) | public token | `NEXT_PUBLIC_MAPBOX_TOKEN` |
 
@@ -148,7 +148,7 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 1. Sign up in the order above; use the free tiers.
 2. Create `.env.example` with every variable name and no values.
 3. Never prefix secrets with `NEXT_PUBLIC_`. Only the Clerk publishable key and Stream public key are public.
-4. Check the free-tier limits of Browserbase, Firecrawl and Sarvam now; cap your demo usage accordingly.
+4. Check the free-tier limits of Browserbase, Firecrawl and ElevenLabs (10,000 characters a month on the free plan) now; cap your demo usage accordingly.
 
 **Done when:** all 12 values exist in `.env.local`.
 
@@ -509,7 +509,7 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 4. `retrieve()` calls `index.namespace(ns).searchRecords({ query: { topK: 5, inputs: { text }, filter }, fields: [...] })` with a metadata filter (district, type). Optionally add a rerank (`bge-reranker-v2-m3`) for the final top 5. Return text plus source fields from our DB.
 5. Use one namespace per knowledge type (`tariffs`, `directory`, `advisories`, `reports`) so the Knowledge screen can show per-source counts and the assistant can scope searches.
 6. Write an Inngest function `source/sync.requested` that crawls with Firecrawl → chunks → upserts records → updates `KnowledgeSource.status`.
-7. Multilingual: `llama-text-embed-v2` is multilingual, so Assamese and Hindi queries can be sent as-is; still translate to English with Sarvam when recall is poor.
+7. Multilingual: `llama-text-embed-v2` is multilingual, so Assamese and Hindi queries can be sent as-is; still translate to English with Gemini when recall is poor.
 
 **Built (differs from the text above):**
 - **The index already existed** (`dor-check-index`, AWS us-east-1) with the newer schema: one `semantic_text` field named **`text`** (not `chunk_text`), `llama-text-embed-v2`, 1024 dimensions. It is served by the records API (`upsertRecords` / `searchRecords`); metadata fields are stored and filterable. Pinecone SDK is v9. The index is checked by `npm run test:knowledge`.
@@ -711,7 +711,7 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 **How to build**
 1. `/api/chat` route: `streamText({ model, tools, system, messages })` and return `toUIMessageStreamResponse()` (check your AI SDK version for the exact helper).
 2. Tools: `retrieveKnowledge`, `comparePrice`, `lookupDirectory`, `startInvestigation` (creates the row and sends the Inngest event, returns the id so the UI shows a live-run card).
-3. Language: detect the user language, answer in the same language (Assamese, Hindi, English). For weaker languages translate through Sarvam before and after.
+3. Language: detect the user language, answer in the same language (Assamese, Hindi, English). For other languages translate with Gemini.
 4. Persist messages to `ChatMessage` in `onFinish`; keep citations as JSON.
 5. Per-investigation follow-up: when opened from a verdict, pre-load result context into the system prompt.
 6. Guardrails: refuse to guess; cite or say "I don't know".
@@ -722,26 +722,26 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 - `/assistant` (new chat, optional `?investigation=&q=&lang=` handoff from a verdict) and `/assistant/[id]`; a layout keeps the conversation list on the left. History lives in our own `ChatThread` / `ChatMessage` tables (Stream is not used for the assistant, so the "Powered by Stream chat" label in the mockup is left out).
 - `POST /api/chat`: AI SDK `streamText` with the read-only agent tools (directory, community reports, knowledge, price) plus `startInvestigation`. The browser sends only the newest message; the server keeps the history. Each reply is saved with its parts, source chips, model, prompt version and tokens; tool calls are logged against it.
 - Source chips come from what the tools registered in the evidence ledger; the model never sees or writes a link. Tool chips and the "Running investigation" card (polls the run, then offers the result) are drawn from the saved message parts, so they survive a reload.
-- Language chips (Auto, English, Hindi, Assamese) set the reply language per thread. Weaker languages are not translated through Sarvam yet (Phase 25/26).
+- Language chips (Auto, English, Hindi, Assamese) set the reply language per thread. Translation uses Gemini.
 - Limits: 40 messages per person per hour, one `startInvestigation` per turn, the plan's investigation limit still applies. A result id is only attached to a chat if the person owns it.
 - **Web and browser tools:** `searchWeb` and `scrapePage` (Firecrawl) give live web search. `browseSite` opens one public page in the secure Browserbase browser through the existing capture workflow (read-only: navigate, screenshot, read; never type, click, log in or pay). The chat embeds the live view while it works, then shows the screenshot and the prices the page showed; the screenshot and page facts go to the evidence vault. At most 2 pages and 3 searches per message. The model gets the prices and an advance-payment flag, never the page's phone numbers or payment ids.
 - Page reading now uses `GEMINI_CAPTURE_MODEL` (default `google/gemini-3.1-flash-lite-preview`): the full 3.5-flash ran out of free-tier quota and silently stopped reading pages.
-- Voice input uses the browser's speech recognition where it exists (hidden otherwise); Sarvam speech arrives in Phase 26. "Listen" (read aloud) is Phase 25.
+- Voice input uses the browser's speech recognition where it exists (hidden otherwise); recorded speech goes through ElevenLabs Scribe (Phase 26). "Listen" (read aloud) is Phase 25.
 
 ---
 
-## Phase 25 — Sarvam read-aloud
+## Phase 25 — Read-aloud (ElevenLabs; was Sarvam)
 
 **Goal:** any verdict, price result or advisory can be spoken in Assamese, Hindi or English.
 
 **Deliverables:** `/voice` screen (text area, language and voice selects, waveform player, settings sliders, history), "Read aloud" buttons elsewhere.
 
-**Tech:** Sarvam text-to-speech REST API called from a server route; audio stored in R2; Web Audio / `wavesurfer.js` for the waveform.
+**Tech:** ElevenLabs text to speech (`@elevenlabs/elevenlabs-js`) called from a server route; audio stored in R2; Web Audio for the waveform.
 
-**Key:** `SARVAM_API_KEY` (dashboard.sarvam.ai). Check Sarvam's docs for the current TTS model name, supported language codes (for example `as-IN`, `hi-IN`, `en-IN`), speaker names and request limits, because they change.
+**Key:** `ELEVENLABS_API_KEY` (elevenlabs.io). Voice Library voices need a paid plan via the API; check current model names and language support in the ElevenLabs docs.
 
 **How to build**
-1. `POST /api/voice/tts` → validate text length, call Sarvam TTS with `{ text, target_language_code, speaker, pace, ... }`, decode the base64 audio in the response, upload it, create a `VoiceJob`.
+1. `POST /api/voice/tts` → validate text length, call ElevenLabs TTS with `{ text, modelId, voiceId, voiceSettings }`, wrap the PCM as WAV, upload it, create a `VoiceJob`.
 2. Cache by hash of `(text, lang, voice, pace)` to avoid paying twice.
 3. UI mirrors your reference: big text area, bottom bar with language and voice dropdowns and a dark "Generate" button, player with waveform and timer, right panel with Settings (pace, pitch, loudness sliders) and History tabs, toast "Audio ready".
 4. Translate first when the text language differs from the chosen output language (Phase 26 helper).
@@ -749,6 +749,15 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 
 **Done when:** an English verdict plays back in Hindi and appears in History.
 
+**What was built (Phase 25)**
+- `/voice` (Read aloud): text area (5,000 characters), language and voice menus, Generate, a player with a waveform decoded in the browser (Web Audio, seekable), Settings (Pace, Stability, Similarity, language chips) and History (reload, delete). "From a verdict" fills the text with a verdict in plain sentences; `/voice?investigation=` does the same. "Dictate" uses the browser's speech recognition where present.
+- `POST /api/voice/tts` and `GET /api/voice/[id]/audio` (owner-only, byte ranges, `?download=1`). Audio is a WAV in private R2 (`voice/<user>/<job>.wav`), served through our own route so the page can decode it for the waveform. A `VoiceJob` row is kept per clip.
+- **Provider: ElevenLabs** (`server/elevenlabs.ts`, `@elevenlabs/elevenlabs-js`), replacing Sarvam because Sarvam gated Assamese speech. One chosen voice per language: Assamese `eBjbdlli9b8tJL1ng9Vx` (Priyanka), Hindi `X1aCu8g69vgtNfFwu68G` (Neha), English `ZbxPfVOKktgkLqi5LCBx` (Dhara). Output is raw PCM wrapped as WAV, so joining, durations and the waveform are unchanged.
+- **Models**: `eleven_v3` for Assamese (the one that takes the `as` language hint) and `eleven_multilingual_v2` for Hindi and English. `eleven_v3` ignores the speed setting, so the Pace slider works for Hindi and English and is disabled for Assamese. Override both with `ELEVENLABS_TTS_MODEL`.
+- **Free-plan fallback**: the three voices are Voice Library voices, which ElevenLabs refuses on the free plan (HTTP 402). The server then speaks with the premade voice Sarah and records which voice was used; on a paid plan (or $5 credits) the chosen voices take over with no code change. Fallback audio is only reused from cache while the chosen voice is known to be refused. The free plan also allows only 10,000 characters a month.
+- **Translation** moved to Gemini (`server/translate.ts`, `generateText` with temperature 0, numbers, names, links and payment ids kept; blocks cached in `Translation`). Text in another language is translated first and the translation is shown ("Show what was spoken"). Long text is cut at sentence ends (3,000 characters per request) and WAV pieces joined; identical requests reuse stored audio; 30 clips per person per hour.
+- "Read aloud" buttons (language menu: English, Hindi, Assamese) are on the verdict page, the price result's "Why this range" card and every assistant answer ("Listen").
+- Settings: ElevenLabs has no pitch or loudness, so the panel has Pace, Stability and Similarity (`VoiceJob.stability` / `similarity`, migration `voice_elevenlabs`).
 ---
 
 ## Phase 26 — Voice reporting and translation
@@ -757,9 +766,9 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 
 **Deliverables:** recorder component, transcription job, translation helper, transcript editor in the report form.
 
-**Tech:** `MediaRecorder` API, Sarvam speech-to-text and translation APIs, Inngest `voice/transcribe.requested`.
+**Tech:** Browser recording (WAV), ElevenLabs Scribe v2 for speech to text, Gemini for translation (the plan named Sarvam and an Inngest job; see below).
 
-**Key:** `SARVAM_API_KEY`. Verify the current STT model, accepted audio formats, maximum clip length and translate endpoint in Sarvam's docs.
+**Key:** `ELEVENLABS_API_KEY`.
 
 **How to build**
 1. Record in the browser (`audio/webm`); show timer and live waveform from an `AnalyserNode`.
@@ -771,6 +780,12 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 
 **Done when:** a 20-second Assamese clip becomes an editable transcript with an English translation.
 
+**What was built (Phase 26)**
+- **Speak your report** on `/reports/new`: a mic panel (permission is asked only when the mic is tapped; a block or an unsupported browser falls back to typing). It records 16 kHz mono WAV in the browser with an AudioWorklet and shows a timer and a live waveform. Up to 2 minutes; it stops itself at the limit.
+- `POST /api/voice/transcribe`: ElevenLabs **Scribe v2** reads the whole clip (no cutting) and detects the language (Assamese, Hindi, English, Bengali and more; ISO 639-3 codes are mapped to `as-IN` style). Scribe often labels Assamese as Bengali because they share a script, so a "Bengali" transcript containing ৰ or ৱ is treated as Assamese. Anything not in English is translated to English with Gemini; if that fails the transcript is still returned.
+- The form's description is filled with the transcript, then the English version, labelled "Transcript (editable)"; the title is filled from the English text if empty. The recording (private, R2) and both texts are kept as a `VoiceJob (STT)` and linked to the report on submit (`voiceJobId`); it is not shown on the public report. 10 recordings per person per hour.
+- **Deviation from the plan:** no Inngest job and no ffmpeg. Recording WAV in the browser means no conversion, and a clip transcribes in a few seconds, so the request does the work and the screen shows "Transcribing and translating…". `lib/wav.ts` holds the WAV tools shared by browser and server.
+- Tested with real Assamese speech (a clip made with the Assamese voice): transcribed in Assamese script and detected as Assamese with an English version.
 ---
 
 ## Phase 27 — Moderation, workflows and knowledge admin
@@ -917,4 +932,4 @@ Keep Phases 0–10, 13–15, 17–21, 22 (without Stream), 25 (read-aloud only),
 
 ## Appendix D — Verify before you build
 
-Service APIs and model names change. Before each integration phase, open the vendor docs and confirm: Sarvam model and language codes, Browserbase connect flow, Firecrawl SDK method names, Pinecone `createIndexForModel`, `upsertRecords` and `searchRecords` signatures, Stagehand v3 constructor options and Browserbase `sessions.debug` live view fields, the current Gemini model id, Stream channel types, Clerk webhook helper, and the AI SDK version-specific helpers (`generateObject`, `streamText`, `useChat`, tool definition shape).
+Service APIs and model names change. Before each integration phase, open the vendor docs and confirm: ElevenLabs model and language codes, Browserbase connect flow, Firecrawl SDK method names, Pinecone `createIndexForModel`, `upsertRecords` and `searchRecords` signatures, Stagehand v3 constructor options and Browserbase `sessions.debug` live view fields, the current Gemini model id, Stream channel types, Clerk webhook helper, and the AI SDK version-specific helpers (`generateObject`, `streamText`, `useChat`, tool definition shape).

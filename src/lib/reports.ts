@@ -93,6 +93,8 @@ export const reportInputSchema = z.object({
   evidenceIds: z.array(z.string()).max(8, "Attach at most 8 files.").default([]),
   isAnonymous: z.boolean().default(true),
   investigationId: optionalText(60),
+  /** The recording this report was spoken from, if any (kept privately with its transcript). */
+  voiceJobId: optionalText(60),
 });
 export type ReportInput = z.input<typeof reportInputSchema>;
 export type ReportData = z.output<typeof reportInputSchema>;

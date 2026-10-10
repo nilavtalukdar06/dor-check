@@ -1,5 +1,5 @@
-import { PageSkeleton } from "@/components/shell/loading";
+import { VoiceSkeleton } from "@/components/voice/voice-skeleton";
 
 export default function Loading() {
-  return <PageSkeleton variant="split" label="Loading read aloud…" />;
+  return <VoiceSkeleton />;
 }

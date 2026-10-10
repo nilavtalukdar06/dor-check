@@ -4,6 +4,8 @@ import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 import { AskDock } from "@/components/verdict/ask-dock";
 import { ExportButton, ShareButton } from "@/components/verdict/verdict-actions";
+import { ListenButton } from "@/components/voice/listen-button";
+import { verdictSpeech } from "@/lib/voice";
 import { VerdictMap } from "@/components/verdict/verdict-map";
 import { GuidanceCard, Limitations, SignalList, SourcesCard, VerdictBanner } from "@/components/verdict/verdict-parts";
 import { EvidenceCard } from "@/components/investigation/evidence-card";
@@ -37,6 +39,7 @@ async function Verdict({ params }: Pick<PageProps<"/investigate/[id]/verdict">, 
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 print:hidden">
+          <ListenButton text={verdictSpeech({ title: v.title, concern: v.concern, summary: v.summary, guidance: v.guidance })} title={`Verdict · ${v.title}`} source={{ investigationId: v.id }} />
           <ExportButton />
           <ShareButton id={v.id} isPublic={v.share.isPublic} token={v.share.token} />
           <Button className="h-10 gap-2 px-4" nativeButton={false} render={<Link href={`/reports/new?investigation=${v.id}`} />}>

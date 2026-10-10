@@ -1,165 +1,319 @@
 ---
 name: speech-to-text
-description: >-
-  Write correct Sarvam Saaras STT code for 23 Indic languages — REST modes,
-  Batch API with diarization, and WebSocket streaming gotchas. Use this skill
-  when building transcription or voice apps in Python or JS/TS. For live
-  transcription in chat via MCP, use sarvam-mcp instead.
-license: Apache-2.0
-metadata:
-  author: sarvam-ai
-  version: "3.5"
+description: Transcribe audio to text using ElevenLabs Scribe v2. Use when converting audio/video to text, generating subtitles, transcribing meetings, or processing spoken content.
+license: MIT
+compatibility: Requires internet access and an ElevenLabs API key (ELEVENLABS_API_KEY).
+metadata: {"openclaw": {"requires": {"env": ["ELEVENLABS_API_KEY"]}, "primaryEnv": "ELEVENLABS_API_KEY"}}
 ---
 
-# Speech-to-Text — Saaras
+# ElevenLabs Speech-to-Text
 
-> Live in-chat transcription → [sarvam-mcp](../sarvam-mcp) (`sarvam_tools_stt_*`). This skill = **SDK code**.
+Transcribe audio to text with Scribe v2 - supports 90+ languages, speaker diarization, and word-level timestamps.
 
-> [!IMPORTANT]
-> Auth: `api-subscription-key` header — NOT `Authorization: Bearer`. Base URL: `https://api.sarvam.ai` (NOT `/v1` — that prefix is only for the OpenAI-compatible chat endpoint)
+> **Setup:** See [Installation Guide](references/installation.md). For JavaScript, use `@elevenlabs/*` packages only.
 
-## Model
+## Quick Start
 
-`saaras:v3` (default, recommended) — 23 languages, 5 output modes (`transcribe`, `translate`, `verbatim`, `translit`, `codemix`), auto language detection.
-
-`saaras:v4` (latest) — same modes/languages, plus Global English (not just Indian English) and **Keyterm Prompting**: pass `keyterms=["Sarvam", "New Delhi", ...]` (up to 50 terms, 64 chars each) on REST, Batch, or either WebSocket streaming endpoint to bias recognition toward domain-specific names/brands/terms. `keyterms` is `saaras:v4`-only — see Gotchas for a JS-specific caveat.
-
-## Quick Start (Python)
+### Python
 
 ```python
-from sarvamai import SarvamAI
-client = SarvamAI()
+from elevenlabs import ElevenLabs
 
-response = client.speech_to_text.transcribe(
-    file=open("audio.wav", "rb"),
-    model="saaras:v3",
-    mode="transcribe"
-)
-print(response.transcript)
+client = ElevenLabs()
+
+with open("audio.mp3", "rb") as audio_file:
+    result = client.speech_to_text.convert(file=audio_file, model_id="scribe_v2")
+
+print(result.text)
 ```
 
-## Quick Start (JavaScript/TypeScript)
+### JavaScript
+
+```javascript
+import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
+import { createReadStream } from "fs";
+
+const client = new ElevenLabsClient();
+const result = await client.speechToText.convert({
+  file: createReadStream("audio.mp3"),
+  modelId: "scribe_v2",
+});
+console.log(result.text);
+```
+
+### CLI
+
+```bash
+elevenlabs speech-to-text convert --file audio.mp3 --model-id scribe_v2
+```
+
+## Models
+
+| Model ID | Description | Best For |
+|----------|-------------|----------|
+| `scribe_v2` | State-of-the-art accuracy, 90+ languages | Batch transcription, subtitles, long-form audio |
+| `scribe_v2_medical` | Specialized recognition for medical and clinical audio, 90+ languages | Clinical documentation, medical dictation, patient calls |
+| `scribe_v2_realtime` | Low latency (~150ms) | Live transcription, voice agents |
+| `scribe_v2_realtime_turbo` | Realtime transcription variant | Live transcription |
+| `scribe_v2_realtime_lite` | Realtime transcription variant | Live transcription |
+
+## Transcription with Timestamps
+
+Word-level timestamps include type classification and speaker identification:
+
+```python
+result = client.speech_to_text.convert(
+    file=audio_file, model_id="scribe_v2", timestamps_granularity="word"
+)
+
+for word in result.words:
+    print(f"{word.text}: {word.start}s - {word.end}s (type: {word.type})")
+
+```
+
+## Speaker Diarization
+
+Identify WHO said WHAT - the model labels each word with a speaker ID, useful for meetings, interviews, or any multi-speaker audio:
+
+```python
+result = client.speech_to_text.convert(
+    file=audio_file,
+    model_id="scribe_v2",
+    diarize=True
+)
+
+for word in result.words:
+    print(f"[{word.speaker_id}] {word.text}")
+```
+
+For call recordings, the batch API can label diarized speakers as `agent` and `customer` by setting `detect_speaker_roles=true` alongside `diarize=true`. This option is not compatible with `use_multi_channel=true`.
+
+If your workspace has registered speaker profiles, set `use_speaker_library=true` with `diarize=true` to match detected speakers against the speaker library.
+
+```bash
+elevenlabs speech-to-text convert \
+  --file call.mp3 \
+  --model-id scribe_v2 \
+  --diarize true \
+  --detect-speaker-roles true \
+  --use-speaker-library true
+```
+
+## Multichannel Audio
+
+Use `use_multi_channel=true` when each speaker is isolated on a separate audio channel. By default, the API returns one transcript per channel under `transcripts`; set `multichannel_output_style="combined"` to receive one transcript merged by timestamp, with `channel_index` on each word.
+
+```python
+result = client.speech_to_text.convert(
+    file=audio_file,
+    model_id="scribe_v2",
+    use_multi_channel=True,
+    multichannel_output_style="combined",
+)
+```
+
+## Keyterm Prompting
+
+Help the model recognize specific words it might otherwise mishear - product names, technical jargon, or unusual spellings (up to 100 terms):
+
+```python
+result = client.speech_to_text.convert(
+    file=audio_file,
+    model_id="scribe_v2",
+    keyterms=["ElevenLabs", "Scribe", "API"]
+)
+```
+
+## Language Detection
+
+Automatic detection with optional language hint:
+
+```python
+result = client.speech_to_text.convert(
+    file=audio_file,
+    model_id="scribe_v2",
+    language_code="eng"  # ISO 639-1 or ISO 639-3 code
+)
+
+print(f"Detected: {result.language_code} ({result.language_probability:.0%})")
+```
+
+## Supported Formats
+
+**Audio:** MP3, WAV, M4A, FLAC, OGG, WebM, AAC, AIFF, Opus
+**Video:** MP4, AVI, MKV, MOV, WMV, FLV, WebM, MPEG, 3GPP
+
+**Limits:** Up to 5.0GB file size, 10 hours duration
+
+## Response Format
+
+```json
+{
+  "text": "The full transcription text",
+  "language_code": "eng",
+  "language_probability": 0.98,
+  "words": [
+    {"text": "The", "start": 0.0, "end": 0.15, "type": "word", "speaker_id": "speaker_0"},
+    {"text": " ", "start": 0.15, "end": 0.16, "type": "spacing", "speaker_id": "speaker_0"}
+  ]
+}
+```
+
+**Word types:**
+- `word` - An actual spoken word
+- `spacing` - Whitespace between words (useful for precise timing)
+- `audio_event` - Non-speech sounds the model detected (laughter, applause, music, etc.)
+
+## Error Handling
+
+```python
+try:
+    result = client.speech_to_text.convert(file=audio_file, model_id="scribe_v2")
+except Exception as e:
+    print(f"Transcription failed: {e}")
+```
+
+Common errors:
+- **401**: Invalid API key
+- **422**: Invalid parameters
+- **429**: Rate limit exceeded
+
+## Tracking Costs
+
+Monitor usage via `request-id` response header:
+
+```python
+response = client.speech_to_text.with_raw_response.convert(file=audio_file, model_id="scribe_v2")
+result = response.data
+print(f"Request ID: {response.headers.get('request-id')}")
+```
+
+## Real-Time Streaming
+
+For live transcription with ultra-low latency (~150ms), use the real-time API. The real-time API produces two types of transcripts:
+
+- **Partial transcripts**: Interim results that update frequently as audio is processed - use these for live feedback (e.g., showing text as the user speaks)
+- **Committed transcripts**: Final, stable results after you "commit" - use these as the source of truth for your application
+
+A "commit" tells the model to finalize the current segment. You can commit manually (e.g., when the user pauses) or use Voice Activity Detection (VAD) to auto-commit on silence.
+
+### Python (Server-Side)
+
+```python
+import asyncio
+from elevenlabs import ElevenLabs
+
+client = ElevenLabs()
+
+async def transcribe_realtime():
+    async with client.speech_to_text.realtime.connect(
+        model_id="scribe_v2_realtime",
+        include_timestamps=True,
+        keyterms=["ElevenLabs", "Scribe"],
+        no_verbatim=True,
+    ) as connection:
+        await connection.stream_url("https://example.com/audio.mp3")
+
+        async for event in connection:
+            if event.type == "partial_transcript":
+                print(f"Partial: {event.text}")
+            elif event.type == "committed_transcript":
+                print(f"Final: {event.text}")
+
+asyncio.run(transcribe_realtime())
+```
+
+### JavaScript (Client-Side with React)
 
 ```typescript
-import { SarvamAIClient } from "sarvamai";
-import * as fs from "fs";
+import { useScribe, CommitStrategy } from "@elevenlabs/react";
 
-const client = new SarvamAIClient({ apiSubscriptionKey: "YOUR_SARVAM_API_KEY" });
+function TranscriptionComponent() {
+  const [transcript, setTranscript] = useState("");
 
-const response = await client.speechToText.transcribe({
-    file: fs.createReadStream("audio.wav"),
-    model: "saaras:v3",
-    mode: "transcribe"
+  const scribe = useScribe({
+    modelId: "scribe_v2_realtime",
+    commitStrategy: CommitStrategy.VAD, // Auto-commit on silence for mic input
+    keyterms: ["ElevenLabs", "Scribe"],
+    noVerbatim: true,
+    includeLanguageDetection: true,
+    onPartialTranscript: (data) => console.log("Partial:", data.text),
+    onCommittedTranscript: (data) => setTranscript((prev) => prev + data.text),
+  });
+
+  const start = async () => {
+    // Get token from your backend (never expose API key to client)
+    const { token } = await fetch("/scribe-token").then((r) => r.json());
+
+    await scribe.connect({
+      token,
+      microphone: { echoCancellation: true, noiseSuppression: true },
+    });
+  };
+
+  return <button onClick={start}>Start Recording</button>;
+}
+```
+
+### Commit Strategies
+
+| Strategy | Description |
+|----------|-------------|
+| **Manual** | You call `commit()` when ready - use for file processing or when you control the audio segments |
+| **VAD** | Voice Activity Detection auto-commits when silence is detected - use for live microphone input |
+
+Set `includeLanguageDetection: true` to receive the detected language code in delayed final
+transcript events.
+
+```typescript
+// React: set commitStrategy on the hook (recommended for mic input)
+import { useScribe, CommitStrategy } from "@elevenlabs/react";
+
+const scribe = useScribe({
+  modelId: "scribe_v2_realtime",
+  commitStrategy: CommitStrategy.VAD,
+  keyterms: ["ElevenLabs", "Scribe"],
+  noVerbatim: true,
+  // Optional VAD tuning:
+  vadSilenceThresholdSecs: 1.5,
+  vadThreshold: 0.4,
 });
-console.log(response.transcript);
 ```
 
-## Batch API (Long Audio + Diarization)
-
-```python
-job = client.speech_to_text_job.create_job(
-    model="saaras:v3",
-    mode="transcribe",
-    language_code="hi-IN",
-    with_diarization=True,
-    num_speakers=2
-)
-job.upload_files(file_paths=["meeting.mp3"])
-job.start()
-job.wait_until_complete()
-job.download_outputs(output_dir="./output")
+```javascript
+// JavaScript client: pass vad config on connect
+const connection = await client.speechToText.realtime.connect({
+  modelId: "scribe_v2_realtime",
+  keyterms: ["ElevenLabs", "Scribe"],
+  noVerbatim: true,
+  vad: {
+    silenceThresholdSecs: 1.5,
+    threshold: 0.4,
+  },
+});
 ```
 
-Supports audio up to 2 hours per file, up to 20 files per job, up to 20 speakers (`num_speakers`), all 5 output modes.
+### Event Types
 
-## WebSocket Streaming
+| Event | Description |
+|-------|-------------|
+| `partial_transcript` | Live interim results |
+| `final_transcript` | Stable segment result sent before the segment is committed |
+| `final_transcript_with_timestamps` | Delayed final result with timestamps and/or detected language |
+| `committed_transcript` | Final results after commit |
+| `committed_transcript_with_timestamps` | Final with word timing |
+| `committed_transcript_entities` | Entities detected in a committed segment |
+| `edited_transcript` | Original and edited text for a committed segment when transcript editing is enabled |
+| `invalid_request` | Connection parameters were rejected and the session closes |
+| `error` | Error occurred |
 
-```python
-import asyncio, base64
-from sarvamai import AsyncSarvamAI
+See real-time references for complete documentation.
 
-async def stream_audio():
-    client = AsyncSarvamAI()
-    async with client.speech_to_text_streaming.connect(
-        model="saaras:v3",
-        language_code="hi-IN",   # required — connect() now rejects a missing language_code
-        high_vad_sensitivity=True,
-        flush_signal=True
-    ) as ws:
-        with open("audio.wav", "rb") as f:
-            audio_base64 = base64.b64encode(f.read()).decode("utf-8")
-        await ws.transcribe(audio=audio_base64, encoding="audio/wav", sample_rate=16000)
-        await ws.flush()
-        response = await ws.recv()
-        print(response)
+## References
 
-asyncio.run(stream_audio())
-```
-
-No fixed session duration limit — but the connection closes after **60 seconds of inactivity**. Use `sample_rate=8000` for telephony audio.
-
-Verified live: `connect()` currently raises `TypeError: ... missing 1 required keyword-only argument: 'language_code'` if you omit it — it is not optional in the installed SDK, despite not being marked required in some docs examples.
-
-## Realtime Streaming (New — `saaras:v3-realtime` / `saaras:v4`)
-
-A newer, separate WebSocket API — not a replacement for the "WebSocket Streaming" above, which still works. Use this one for true interim results and finer turn control.
-
-```python
-import asyncio, base64
-from sarvamai import AsyncSarvamAI, RealtimeAudioInput, RealtimeEnd
-
-async def transcribe(audio_chunks):
-    client = AsyncSarvamAI()
-    async with client.speech_to_text_realtime_streaming.connect(
-        language_code="hi-IN",
-        stream_type="fast",   # "fast" | "balanced" (default) | "simulated"
-    ) as ws:
-        async def send_audio():
-            async for chunk in audio_chunks:
-                await ws.send_realtime_audio_input(
-                    RealtimeAudioInput(audio=base64.b64encode(chunk).decode("utf-8"))
-                )
-            await ws.send_realtime_end(RealtimeEnd())
-
-        async def receive_events():
-            async for message in ws:
-                if message.event == "transcript.partial":
-                    print(f"partial: {message.text}")
-                elif message.event == "transcript.final":
-                    print(f"final: {message.text}")
-                elif message.event == "error":
-                    print(f"error ({message.code}): {message.message}")
-
-        await asyncio.gather(send_audio(), receive_events())
-```
-
-JS: `client.speechToTextRealtimeStreaming.connect({ language_code, stream_type })`, then `socket.sendRealtimeAudioInput({...})` / `socket.sendRealtimeEnd({...})`, with events on `socket.on("message", ...)`.
-
-## Gotchas
-
-| Gotcha | Detail |
-|--------|--------|
-| **REST: 30s limit** | Audio >30s fails. Use Batch API or WebSocket for longer files. |
-| **JS method name** | `client.speechToText.transcribe({...})` — camelCase, NOT `speech_to_text`. File via `fs.createReadStream()`. |
-| **WebSocket codecs** | Only `wav`, `pcm_s16le`, `pcm_l16`, `pcm_raw`. MP3/AAC/OGG NOT supported for streaming. PCM input is 16kHz only. |
-| **WebSocket audio** | Must be **base64-encoded**. Use `sample_rate=8000` for telephony audio. |
-| **WebSocket idle timeout** | Connection closes after **60s of inactivity**. For long-running sessions, send periodic silent (near-zero amplitude) audio chunks as keep-alive. |
-| **Flush signal** | `flush_signal=True` + `await ws.flush()` forces immediate transcription boundary. |
-| **VAD events** | `vad_signals=True` emits `START_SPEECH`/`END_SPEECH` events alongside transcripts. `high_vad_sensitivity=True` for automatic end-of-speech detection. |
-| **Short audio detection** | Set `language_code` explicitly for audio <3 seconds — auto-detection needs more signal. |
-| **`keyterms` is v4-only** | Accepted with `model="saaras:v4"` on REST, Batch, and **both** WebSocket streaming endpoints (legacy `/speech-to-text/ws` and realtime). Verified live: `saaras:v3` + `keyterms` returns `400` — `"'keyterms' is only supported by model 'saaras:v4', got 'saaras:v3'."` — a hard error, not a silent ignore. Format: JSON list of strings, max 50 terms, 64 chars each — don't use the older `keyterm`/`hotwords` fields. |
-| **`keyterms` JS support** | Docs (as of this writing) say JS `speechToText.transcribe({..., keyterms})` hasn't shipped to npm, with only `speechToTextJob.createJob({..., keyterms})` (Batch) working. Verified live against `sarvamai@1.1.10`: REST `transcribe({..., keyterms})` **worked without error** — the docs note may already be stale. Don't trust either source blindly; the gap may be closed by the time you read this — test the actual call once. Python needs `sarvamai>=0.1.33a1` (REST) / `>=0.1.33a3` (Batch) either way. |
-| **Realtime vs legacy streaming are different endpoints** | Legacy WebSocket (`/speech-to-text/ws`, `speech_to_text_streaming`) has no interim results and needs a reconnect to change params. Realtime (`/speech-to-text-realtime/ws`, `speech_to_text_realtime_streaming`) adds `transcript.partial` events, millisecond VAD params (`threshold`, `silence_duration_ms`, `min_speech_duration_ms`), and live `config.update` — don't mix the two APIs' parameter names. |
-| **Realtime sample rate** | Only `8000` or `16000` Hz — any other value closes the connection with code `4000`. |
-
-## Full Docs
-
-Fetch streaming protocol, batch API SDK examples, and codec details from:
-
-- **https://docs.sarvam.ai/llms.txt** — comprehensive docs index
-- [STT Overview](https://docs.sarvam.ai/api/api-guides-tutorials/speech-to-text/overview)
-- [Streaming API (legacy)](https://docs.sarvam.ai/api/api-guides-tutorials/speech-to-text/streaming-api)
-- [Realtime Streaming API](https://docs.sarvam.ai/api/api-guides-tutorials/speech-to-text/realtime-streaming)
-- [Keyterm Prompting](https://docs.sarvam.ai/api/api-guides-tutorials/speech-to-text/how-to/keyterms)
-- [Batch API + Diarization](https://docs.sarvam.ai/api/api-guides-tutorials/speech-to-text/batch-api)
-- [Rate Limits](https://docs.sarvam.ai/api/ratelimits)
+- [Installation Guide](references/installation.md)
+- [Transcription Options](references/transcription-options.md)
+- [Real-Time Client-Side Streaming](references/realtime-client-side.md)
+- [Real-Time Server-Side Streaming](references/realtime-server-side.md)
+- [Commit Strategies](references/realtime-commit-strategies.md)
+- [Real-Time Event Reference](references/realtime-events.md)
