@@ -14,7 +14,7 @@ type State = "idle" | "loading" | "playing";
  * "Read aloud" for a piece of text on any page: choose a language and it is spoken (translated
  * first if needed). The audio is saved to the person's history on the Read aloud screen.
  */
-export function ListenButton({ text, title, source, label = "Read aloud", variant = "outline", className }: { text: string; title?: string; source?: { investigationId?: string; chatMessageId?: string }; label?: string; variant?: "outline" | "ghost"; className?: string }) {
+export function ListenButton({ text, title, source, label = "Read aloud", variant = "outline", className, autoPlay }: { text: string; title?: string; source?: { investigationId?: string; chatMessageId?: string }; label?: string; variant?: "outline" | "ghost"; className?: string; /** Speak it once when the page opens (the person turned on Auto read verdicts). Browsers may refuse until the page is tapped; then the button is there. */ autoPlay?: { language: VoiceLanguage; key: string } })  {
   const [state, setState] = useState<State>("idle");
   const [error, setError] = useState<string | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -52,6 +52,22 @@ export function ListenButton({ text, title, source, label = "Read aloud", varian
       setState("idle");
     }
   };
+
+  const autoKey = autoPlay?.key;
+  const autoLanguage = autoPlay?.language;
+  useEffect(() => {
+    if (!autoKey || !autoLanguage) return;
+    // Once per result and browser tab, so reloading does not speak it again.
+    try {
+      if (sessionStorage.getItem(autoKey)) return;
+      sessionStorage.setItem(autoKey, "1");
+    } catch {
+      // storage blocked: speak anyway, once per page load
+    }
+    const timer = setTimeout(() => void play(autoLanguage), 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoKey, autoLanguage]);
 
   if (state === "playing") {
     return (

@@ -1,4 +1,5 @@
 import { Prisma } from "@/generated/prisma/client";
+import { notifyUsers } from "@/server/notify";
 import { inngest } from "@/inngest/client";
 import { reportSubmitted, sourceSyncRequested } from "@/inngest/events";
 import { extractIdentifiers, normalizeDomain } from "@/lib/identifiers";
@@ -236,9 +237,7 @@ export async function changeReportStatus(reportId: string, actor: { id: string; 
 
   const followers = await prisma.reportFollow.findMany({ where: { reportId: report.id, userId: { not: actor.id } }, select: { userId: true } });
   if (followers.length) {
-    await prisma.notification.createMany({
-      data: followers.map((f) => ({ userId: f.userId, type: "report_status", title: `${report.reference} is now ${STATUS_LABEL[to].toLowerCase()}`, body: note?.trim().slice(0, 200) || null, href: `/reports/${report.reference}`, data: { reportId: report.id, from, to } })),
-    });
+    await notifyUsers(followers.map((f) => ({ userId: f.userId, type: "report_status", title: `${report.reference} is now ${STATUS_LABEL[to].toLowerCase()}`, body: note?.trim().slice(0, 200) || null, href: `/reports/${report.reference}`, data: { reportId: report.id, from, to } })));
   }
   // Rejected reports leave the knowledge base; verified ones carry their new status into it.
   await requestReportsReindex(actor.id);

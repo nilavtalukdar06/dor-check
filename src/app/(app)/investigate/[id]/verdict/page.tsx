@@ -13,7 +13,9 @@ import { LoadingState } from "@/components/shell/loading";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatStamp } from "@/lib/evidence";
+import { voiceLanguageOf } from "@/lib/settings";
 import { getVerdictView } from "@/server/investigation-view";
+import { getPreferences } from "@/server/settings";
 import { getCurrentUser } from "@/server/users";
 
 export const metadata = { title: "Verdict" };
@@ -26,8 +28,10 @@ async function Verdict({ params }: Pick<PageProps<"/investigate/[id]/verdict">, 
   const { id } = await params;
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
-  const v = await getVerdictView(user.id, id);
+  const [v, prefs] = await Promise.all([getVerdictView(user.id, id), getPreferences(user.id)]);
   if (!v) notFound();
+  // Auto read verdicts: only a result that just finished, so old ones are not read out every visit.
+  const justFinished = v.completedAt ? new Date().getTime() - v.completedAt.getTime() < 10 * 60_000 : false;
 
   return (
     <div className="flex flex-col gap-6" data-testid="verdict-page">
@@ -39,7 +43,7 @@ async function Verdict({ params }: Pick<PageProps<"/investigate/[id]/verdict">, 
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 print:hidden">
-          <ListenButton text={verdictSpeech({ title: v.title, concern: v.concern, summary: v.summary, guidance: v.guidance })} title={`Verdict · ${v.title}`} source={{ investigationId: v.id }} />
+          <ListenButton text={verdictSpeech({ title: v.title, concern: v.concern, summary: v.summary, guidance: v.guidance })} title={`Verdict · ${v.title}`} source={{ investigationId: v.id }} autoPlay={prefs.autoReadVerdicts && justFinished ? { language: voiceLanguageOf(prefs.language), key: `auto-read-${v.id}` } : undefined} />
           <ExportButton />
           <ShareButton id={v.id} isPublic={v.share.isPublic} token={v.share.token} />
           <Button className="h-10 gap-2 px-4" nativeButton={false} render={<Link href={`/reports/new?investigation=${v.id}`} />}>

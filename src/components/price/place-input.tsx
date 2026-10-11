@@ -7,7 +7,8 @@ import type { PickedGeoInput } from "@/lib/price-schema";
 import { cn } from "@/lib/utils";
 import type { PlaceSuggestion } from "@/server/geocoding";
 
-export type PlacePick = { placeId?: string; geo?: PickedGeoInput };
+/** What was picked. `at` is the point on the map, for forms that set a pin. */
+export type PlacePick = { placeId?: string; geo?: PickedGeoInput; at?: { lat: number; lng: number } };
 
 /**
  * Place box with live suggestions: curated places first, then Mapbox (towns, localities,
@@ -71,8 +72,8 @@ export function PlaceInput({
     onChange(
       s.name,
       s.source === "seed"
-        ? { placeId: s.placeId }
-        : { geo: { mapboxId: s.mapboxId!, name: s.name, detail: s.detail, lat: s.lat, lng: s.lng, kind: s.kind } },
+        ? { placeId: s.placeId, at: { lat: s.lat, lng: s.lng } }
+        : { geo: { mapboxId: s.mapboxId!, name: s.name, detail: s.detail, lat: s.lat, lng: s.lng, kind: s.kind }, at: { lat: s.lat, lng: s.lng } },
     );
     setOpen(false);
   };

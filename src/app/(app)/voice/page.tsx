@@ -3,7 +3,8 @@ import { VoiceStudio } from "@/components/voice/voice-studio";
 import { VoiceSkeleton } from "@/components/voice/voice-skeleton";
 import prisma from "@/lib/prisma";
 import { withBaselineGuidance } from "@/lib/verdict";
-import { clampSettings, defaultVoice, languageFromCode, TTS_MAX_CHARS, verdictSpeech, voiceBelongsTo } from "@/lib/voice";
+import { voiceLanguageOf } from "@/lib/settings";
+import { clampSettings, defaultVoice, TTS_MAX_CHARS, verdictSpeech, voiceBelongsTo } from "@/lib/voice";
 import { getCurrentUser } from "@/server/users";
 import { listVoiceJobs } from "@/server/voice";
 
@@ -29,9 +30,9 @@ async function Studio({ searchParams }: Pick<PageProps<"/voice">, "searchParams"
   const wanted = typeof sp.investigation === "string" ? verdicts.find((v) => v.id === sp.investigation)?.text : null;
   const text = (wanted ?? (typeof sp.text === "string" ? sp.text : "")).slice(0, TTS_MAX_CHARS);
 
-  const language = languageFromCode(pref?.language);
+  const language = voiceLanguageOf(pref?.language);
   const speaker = pref && voiceBelongsTo(pref.defaultVoice, language) ? pref.defaultVoice : defaultVoice(language);
-  return <VoiceStudio initialText={text} initialLanguage={language} initialSpeaker={speaker} initialSettings={clampSettings({ pace: pref?.speechPace })} history={history} verdicts={verdicts} />;
+  return <VoiceStudio initialText={text} initialLanguage={language} initialSpeaker={speaker} initialSettings={clampSettings({ pace: pref?.speechPace, stability: pref?.speechStability, similarity: pref?.speechSimilarity })} history={history} verdicts={verdicts} />;
 }
 
 export default function VoicePage({ searchParams }: PageProps<"/voice">) {

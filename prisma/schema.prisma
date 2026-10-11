@@ -278,12 +278,15 @@ model UserPreference {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /// BCP-47 code, e.g. "en-IN", "hi-IN", "as-IN".
-  language            String    @default("en-IN")
+  /// "auto" (reply in the language the person writes in), or a BCP-47 code: "en-IN", "hi-IN", "as-IN".
+  language            String    @default("auto")
   defaultVoice        String    @default("meera")
   speechPace          Float     @default(1.0)
   speechPitch         Float     @default(0)
   speechLoudness      Float     @default(1.0)
+  /// ElevenLabs voice settings (speechPace above is its speed).
+  speechStability     Float     @default(0.5)
+  speechSimilarity    Float     @default(0.75)
   autoReadVerdicts    Boolean   @default(false)
   notifyRunAlerts     Boolean   @default(true)
   notifyReportUpdates Boolean   @default(true)
@@ -521,6 +524,13 @@ model Property {
   isActive           Boolean     @default(true)
   isDemo             Boolean     @default(false)
   createdById        String?
+  /// "APPROVED" (listed), "PENDING" (a business asked to be listed; hidden until a moderator decides) or "REJECTED".
+  listingStatus      String      @default("APPROVED")
+  /// The signed-in person who asked for this listing.
+  requestedById      String?
+  rejectionReason    String?
+  /// A document the business attached to its request (registration certificate and so on).
+  documentEvidenceId String?
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 
@@ -533,6 +543,7 @@ model Property {
   @@index([verified])
   @@index([domain])
   @@index([lat, lng])
+  @@index([listingStatus])
 }
 
 /// A normalised URL, domain, phone, UPI id, email or name. Lets us match the same seller

@@ -8,12 +8,13 @@ import {
   SidebarUserFallback,
 } from "@/components/shell/sidebar-user";
 import { Topbar } from "@/components/shell/topbar";
+import { getRole } from "@/server/roles";
+import { unreadReportUpdates } from "@/server/settings";
+import { getUsage } from "@/server/usage";
 import { getCurrentUser } from "@/server/users";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 
-// TODO(phase 28): real usage and counts.
-const usage = { used: 12, limit: 50 };
-const counts = { reports: 3, moderation: 7 };
+const noCounts: Record<string, number> = {};
 
 // Pages here are auth-gated, so navigations are not expected to be instant.
 export const instant = false;
@@ -29,23 +30,36 @@ async function SessionSync() {
   return null;
 }
 
+/** The sidebar with this person's real numbers: this month's investigations and unread report updates. */
+async function LiveSidebar() {
+  const user = await getCurrentUser();
+  const role = (await getRole()) ?? "TRAVELLER";
+  const [usage, community] = user ? await Promise.all([getUsage(user.id, role), unreadReportUpdates(user.id)]) : [null, 0];
+  const counts = { reports: community };
+  return (
+    <AppSidebar
+      usage={usage ? { used: usage.used, limit: usage.limit } : null}
+      counts={counts}
+      moderatorSlot={
+        <Suspense fallback={null}>
+          <SidebarModeratorNav counts={counts} />
+        </Suspense>
+      }
+      user={
+        <Suspense fallback={<SidebarUserFallback />}>
+          <SidebarUser />
+        </Suspense>
+      }
+    />
+  );
+}
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <SidebarProvider>
-      <AppSidebar
-        usage={usage}
-        counts={counts}
-        moderatorSlot={
-          <Suspense fallback={null}>
-            <SidebarModeratorNav counts={counts} />
-          </Suspense>
-        }
-        user={
-          <Suspense fallback={<SidebarUserFallback />}>
-            <SidebarUser />
-          </Suspense>
-        }
-      />
+      <Suspense fallback={<AppSidebar usage={null} counts={noCounts} user={<SidebarUserFallback />} />}>
+        <LiveSidebar />
+      </Suspense>
       <SidebarInset className="min-w-0">
         <Topbar />
         <div className="flex-1 px-4 py-6 pb-24 md:px-8 md:py-8 md:pb-8">

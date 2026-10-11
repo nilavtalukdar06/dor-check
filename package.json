@@ -29,6 +29,8 @@
     "test:reports": "node --env-file=.env --import tsx scripts/reports-check.mts",
     "test:discussion": "node --env-file=.env --import tsx scripts/discussion-check.mts",
     "test:transcribe": "node --env-file=.env --import tsx scripts/transcribe-check.mts",
+    "test:settings": "INNGEST_BASE_URL=http://127.0.0.1:9 node --conditions=react-server --env-file=.env --import tsx scripts/settings-check.mts",
+    "test:moderation": "INNGEST_BASE_URL=http://127.0.0.1:9 node --conditions=react-server --env-file=.env --import tsx scripts/moderation-check.mts",
     "test:voice": "node --env-file=.env --import tsx scripts/voice-check.mts",
     "test:assistant": "node --conditions=react-server --env-file=.env --import tsx scripts/assistant-check.mts"
   },

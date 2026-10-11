@@ -9,7 +9,7 @@ import { getCurrentUser, getPersonalWorkspace } from "@/server/users";
 
 const json = (body: Record<string, unknown>, status: number) => NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 
-/** POST /api/evidence/upload: one image (PNG, JPEG or WebP, up to 8 MB) into the caller's vault. */
+/** POST /api/evidence/upload: one image (PNG, JPEG or WebP) or PDF document, up to 8 MB, into the caller's vault. */
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return json({ error: "Sign in first." }, 401);
@@ -31,11 +31,13 @@ export async function POST(req: Request) {
   if (file.size > MAX_UPLOAD_BYTES) return json({ error: "That file is larger than 8 MB." }, 413);
 
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const info = sniffImage(bytes);
-  if (!info) return json({ error: "Only PNG, JPEG or WebP images can be uploaded." }, 415);
+  // A PDF is recognised by its first bytes, not its name or declared type.
+  const pdf = bytes.length > 5 && String.fromCharCode(...bytes.slice(0, 5)) === "%PDF-";
+  const info = pdf ? { ext: "pdf", mime: "application/pdf", width: null, height: null } : sniffImage(bytes);
+  if (!info) return json({ error: "Only PNG, JPEG or WebP images, or PDF documents, can be uploaded." }, 415);
 
   const clean = (v: FormDataEntryValue | null, max: number) => (typeof v === "string" ? v.trim().replace(/\s+/g, " ").slice(0, max) : "");
-  const title = clean(form.get("title"), 80) || file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "Uploaded image";
+  const title = clean(form.get("title"), 80) || file.name.replace(/\.[^.]+$/, "").slice(0, 80) || (pdf ? "Uploaded document" : "Uploaded image");
   const subject = clean(form.get("subject"), 120) || null;
 
   const { ref, key } = await putObject(`evidence/${user.id}/uploads/${Date.now()}-${randomUUID().slice(0, 8)}.${info.ext}`, bytes, info.mime);
@@ -44,7 +46,7 @@ export async function POST(req: Request) {
     data: {
       ownerId: user.id,
       workspaceId: workspace.id,
-      kind: "UPLOAD",
+      kind: pdf ? "DOCUMENT" : "UPLOAD",
       title,
       subject,
       storageKey: key,

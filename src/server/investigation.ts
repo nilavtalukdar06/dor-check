@@ -20,6 +20,7 @@ import { investigationCancelled, investigationRequested } from "@/inngest/events
 import type { AgentInput, AgentResult } from "@/server/agent";
 import { saveAgentResult } from "@/server/agent-persist";
 import type { AgentOptions } from "@/server/agent-tools";
+import { notifyUsers } from "@/server/notify";
 import { consumeRateLimit } from "@/server/rate-limit";
 
 // An investigation as records: the Investigation, its WorkflowRun, six RunSteps, and a RunEvent
@@ -281,20 +282,20 @@ export async function finaliseInvestigation(ref: RunRef, result: AgentResult, id
 export async function completeInvestigation(ref: RunRef, verdictSummary: string, verdict: string) {
   const now = new Date();
   const durationMs = now.getTime() - ref.startedAt;
-  await prisma.$transaction(async (tx) => {
+  const completed = await prisma.$transaction(async (tx) => {
     const current = await tx.investigation.findUniqueOrThrow({ where: { id: ref.investigationId }, select: { status: true } });
-    if (current.status === "COMPLETED") return; // already done: a retry must not count it again
+    if (current.status === "COMPLETED") return false; // already done: a retry must not count it again
     await tx.usageRecord.upsert({
       where: { userId_metric_periodStart: { userId: ref.userId, metric: INVESTIGATION_METRIC, periodStart: usagePeriodStart(now) } },
       create: { userId: ref.userId, metric: INVESTIGATION_METRIC, periodStart: usagePeriodStart(now), quantity: 1 },
       update: { quantity: { increment: 1 } },
     });
-    await tx.notification.create({
-      data: { userId: ref.userId, type: "run_completed", title: `Check complete: ${ref.title}`, body: verdictSummary.slice(0, 200), href: `/investigate/${ref.investigationId}`, data: { investigationId: ref.investigationId, verdict } },
-    });
     await tx.workflowRun.update({ where: { id: ref.runId }, data: { status: "COMPLETED", finishedAt: now, durationMs } });
     await tx.investigation.update({ where: { id: ref.investigationId }, data: { status: "COMPLETED", completedAt: now, durationMs, error: null } });
+    return true;
   });
+  // Told after it is saved, and only if the person left run alerts on.
+  if (completed) await notifyUsers([{ userId: ref.userId, type: "run_completed", title: `Check complete: ${ref.title}`, body: verdictSummary.slice(0, 200), href: `/investigate/${ref.investigationId}`, data: { investigationId: ref.investigationId, verdict } }]);
   await announceFinished(ref.investigationId, "COMPLETED");
 }
 
@@ -309,6 +310,6 @@ export async function failInvestigation(investigationId: string, message: string
   await prisma.runStep.updateMany({ where: { run: { investigationId }, status: "QUEUED" }, data: { status: "SKIPPED" } });
   await announceFinished(investigationId, "FAILED");
   if (inv.status !== "FAILED") {
-    await prisma.notification.create({ data: { userId: inv.userId, type: "run_failed", title: `Check could not finish: ${inv.title}`, body: "Something went wrong. You can try again.", href: `/investigate/${investigationId}` } });
+    await notifyUsers([{ userId: inv.userId, type: "run_failed", title: `Check could not finish: ${inv.title}`, body: "Something went wrong. You can try again.", href: `/investigate/${investigationId}` }]);
   }
 }

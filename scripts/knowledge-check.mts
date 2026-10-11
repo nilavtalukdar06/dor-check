@@ -42,12 +42,19 @@ async function main() {
   const first = await Promise.all(KNOWLEDGE_TYPES.map((t) => syncSource(`internal-${NAMESPACE[t]}`)));
   const second = await Promise.all(KNOWLEDGE_TYPES.map((t) => syncSource(`internal-${NAMESPACE[t]}`)));
   check("a second sync indexes nothing and removes nothing (unchanged documents are skipped)", second.every((s) => s.changed === 0 && s.removed === 0) && second.every((s, i) => s.documents === first[i].documents), second);
-  const counts = await until(namespaceCounts, (c) => KNOWLEDGE_TYPES.every((t) => c[NAMESPACE[t]] === second[KNOWLEDGE_TYPES.indexOf(t)].chunks));
-  check("Pinecone's record count per namespace equals our database's chunk count (no duplicates, no leftovers)", KNOWLEDGE_TYPES.every((t, i) => counts[NAMESPACE[t]] === second[i].chunks), { counts, db: second.map((s) => s.chunks) });
+  // Sources a moderator added (web pages) share the namespaces, so each namespace should hold
+  // the built-in source's chunks plus theirs.
+  const added = async (t: string) => prisma.vectorRecord.count({ where: { document: { source: { via: { not: "INTERNAL" }, type: t } } } });
+  const expected = async () => Object.fromEntries(await Promise.all(KNOWLEDGE_TYPES.map(async (t, i) => [NAMESPACE[t], second[i].chunks + (await added(t))] as const)));
+  const want = await expected();
+  const counts = await until(namespaceCounts, (c) => KNOWLEDGE_TYPES.every((t) => c[NAMESPACE[t]] === want[NAMESPACE[t]]));
+  check("Pinecone's record count per namespace equals our database's chunk count (no duplicates, no leftovers)", KNOWLEDGE_TYPES.every((t) => counts[NAMESPACE[t]] === want[NAMESPACE[t]]), { counts, want });
   check("each source's recorded size and status match what was indexed", (await prisma.knowledgeSource.findMany({ where: { via: "INTERNAL" } })).every((s) => s.status === "INDEXED" && s.recordCount > 0 && !!s.lastSyncedAt && s.lastSyncDurationMs !== null && s.error === null));
 
   // ---- Privacy: contact details and accusations stay out of the index
-  const all = await prisma.vectorRecord.findMany({ select: { id: true, text: true, document: { select: { docType: true } } } });
+  // Our own data (directory, tariffs, advisories, reports) must never carry contact details. Public web
+  // pages a moderator added are quoted as they are, links and all, and are not checked here.
+  const all = await prisma.vectorRecord.findMany({ where: { document: { source: { via: "INTERNAL" } } }, select: { id: true, text: true, document: { select: { docType: true } } } });
   const leaks = all.filter((r) => /(?<!\d)[6-9]\d{4}[\s-]?\d{5}(?!\d)|@[a-z]+\b|https?:\/\//i.test(r.text));
   check(`no phone number, UPI id, email or web address in any of the ${all.length} indexed chunks`, leaks.length === 0, leaks.slice(0, 3).map((l) => l.text.slice(0, 120)));
   const reports = all.filter((r) => r.document.docType === "report");
@@ -136,8 +143,9 @@ async function main() {
   }
 
   // ---- The index ends up exactly as it should
-  const finalCounts = await until(namespaceCounts, (c) => KNOWLEDGE_TYPES.every((t, i) => c[NAMESPACE[t]] === second[i].chunks));
-  check("finally: the index holds exactly the real data again", KNOWLEDGE_TYPES.every((t, i) => finalCounts[NAMESPACE[t]] === second[i].chunks), finalCounts);
+  const wantFinal = await expected();
+  const finalCounts = await until(namespaceCounts, (c) => KNOWLEDGE_TYPES.every((t) => c[NAMESPACE[t]] === wantFinal[NAMESPACE[t]]));
+  check("finally: the index holds exactly the real data again", KNOWLEDGE_TYPES.every((t) => finalCounts[NAMESPACE[t]] === wantFinal[NAMESPACE[t]]), { finalCounts, wantFinal });
 }
 
 main()

@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { parseWav, wavSeconds } from "@/lib/wav";
 import { RECORD_MAX_SEC, RECORD_MIN_SEC, refineLanguage, spokenLanguageName, STT_RATE } from "@/lib/voice";
 import { consumeRateLimit } from "@/server/rate-limit";
+import { recordVoiceSeconds } from "@/server/settings";
 import { elevenlabsConfigured, SpeechError, sttClip } from "@/server/elevenlabs";
 import { translateCodes, type TranslateFn } from "@/server/translate";
 import { putObject, storageConfigured } from "@/server/storage";
@@ -55,6 +56,7 @@ export async function transcribeClip(userId: string, audio: Uint8Array, deps: Tr
     });
     const stored = await putObject(`voice/${userId}/${job.id}.wav`, audio, "audio/wav");
     await prisma.voiceJob.update({ where: { id: job.id }, data: { status: "COMPLETED", storageKey: stored.key, audioUrl: stored.ref, transcript, translated, detectedLanguage: language, completedAt: new Date() } });
+    await recordVoiceSeconds(userId, seconds).catch(() => undefined);
     return { ok: true, job: { id: job.id, transcript, translated, language, languageName: spokenLanguageName(language), durationSec: Math.round(seconds * 10) / 10 } };
   } catch (e) {
     if (e instanceof SpeechError) {

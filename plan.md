@@ -815,6 +815,19 @@ A price check now works for any taxi route, stay, guide or tour. Every number ke
 
 **Done when:** a moderator can take a NEW report to VERIFIED with a published finding, and the traveller sees it; and a business can request a listing, a moderator approves and verifies it, and it appears in the directory and on the map.
 
+**What was built (Phase 27)**
+- **`/moderation`** (moderators and admins): stats (waiting, in review, resolved this week, average time to first review), and tabs **Queue**, **Flagged comments**, **Listing requests**, **Directory**, **Tariffs** (tab and filters live in the address).
+  - **Queue:** open reports (new, in review, verified) ordered by priority then age. Priority (`lib/moderation.ts`): High for money already lost (Rs 5,000 or more), a scam matching another report by an exact identifier, or three or more matches; Medium for any match, any amount or a scam with a payment id; Low otherwise. Filters: status, priority, category, district.
+  - **Review drawer:** the full unredacted report, reporter, identifiers, spoken-report transcript, similar reports, attachments, findings (withdraw), then one decision: status (only allowed transitions), a note to the reporter, and an official finding, saved together. Hide from public / show again.
+  - **Flagged comments:** comments flagged by people or held by screening; keep (or approve and post) or remove.
+  - **Listing requests:** a signed-in business fills `/directory/request` (linked from the Directory and Help): name, type, district, a place picker for the pin, website, phone, UPI id, registration number, description, optional document (PDF or image, 8 MB, private). It becomes a `Property` with `listingStatus: "PENDING"` and `isActive: false`, so every public query already hides it. 3 requests per person per day; the same website, phone or UPI id as a listed or pending business is refused. Moderators: Approve and verify, Approve and list, or Reject with a reason; the business gets a notification.
+  - **Directory:** listed businesses with add and edit (same form, with the pin picker), verify or unverify, remove.
+  - **Tariffs:** researched ranges waiting for review (with their sources and quotes) to approve or reject; tariff boards (add and edit with the pin picker); curated fair-price ranges (add, edit, retire). The lookup key is built like the seed and the price check, so a new range is used by the price check at once.
+- Every decision writes a `ModerationAction` and an `AuditLog` row; directory, tariff and report-visibility changes queue a knowledge re-sync.
+- **`/workflows`**: runs today, success rate and median duration (last 7 days), retries today, from our own `WorkflowRun` / `RunStep` / `RunEvent` tables; a run list (type, subject, status, progress, time) and an event stream (all runs, or one run when its code is clicked); Refresh and "Open in Inngest".
+- **`/knowledge`**: "Add a source" (a public page: advisories, tariffs or businesses) creates a Firecrawl source and starts its sync.
+- The sidebar's Moderation badge counts new reports, flagged comments and listing requests.
+
 ---
 
 ## Phase 28 — Settings, usage, billing and notifications

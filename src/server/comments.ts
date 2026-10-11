@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { COMMENT_RATE, FINDING_MAX, isHeld, screenComment, type CommentStatusName } from "@/lib/comments";
 import { ANY_REFERENCE_RE } from "@/lib/reports";
+import { notifyUsers } from "@/server/notify";
 import { consumeRateLimit } from "@/server/rate-limit";
 import { ensureReportChannel, joinChannel, streamServer, upsertStreamUser } from "@/server/stream";
 
@@ -143,9 +144,7 @@ async function notifyAboutComment(report: { id: string; reference: string; repor
   const ids = new Set(followers.map((f) => f.userId));
   if (report.reporterId && report.reporterId !== authorId) ids.add(report.reporterId);
   if (!ids.size) return;
-  await prisma.notification.createMany({
-    data: [...ids].map((userId) => ({ userId, type: "report_comment", title: `New comment on ${report.reference}`, body: `${author}: ${body.slice(0, 140)}`, href: `/reports/${report.reference}`, data: { reportId: report.id } })),
-  });
+  await notifyUsers([...ids].map((userId) => ({ userId, type: "report_comment", title: `New comment on ${report.reference}`, body: `${author}: ${body.slice(0, 140)}`, href: `/reports/${report.reference}`, data: { reportId: report.id } })));
 }
 
 // ───────────────────────── Flagging and moderating ─────────────────────────
@@ -232,7 +231,7 @@ export async function publishFinding(actor: Actor, reference: string, body: stri
   await prisma.moderationAction.create({ data: { moderatorId: actor.id, targetType: "report", targetId: report.id, action: "publish_finding", note: text.slice(0, 300), after: { findingId: finding.id } } });
   const followers = await prisma.reportFollow.findMany({ where: { reportId: report.id, userId: { not: actor.id } }, select: { userId: true } });
   if (followers.length) {
-    await prisma.notification.createMany({ data: followers.map((f) => ({ userId: f.userId, type: "report_finding", title: `Official finding on ${report.reference}`, body: text.slice(0, 200), href: `/reports/${report.reference}`, data: { reportId: report.id, findingId: finding.id } })) });
+    await notifyUsers(followers.map((f) => ({ userId: f.userId, type: "report_finding", title: `Official finding on ${report.reference}`, body: text.slice(0, 200), href: `/reports/${report.reference}`, data: { reportId: report.id, findingId: finding.id } })));
   }
   return { ok: true, id: finding.id };
 }

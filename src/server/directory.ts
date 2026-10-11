@@ -254,3 +254,86 @@ export async function deleteProperty(
     return property;
   });
 }
+
+// ───────────────────────── Listing requests ─────────────────────────
+
+export const LISTING_REQUESTS_PER_DAY = 3;
+
+export type ListingRequestResult = { ok: true; id: string } | { ok: false; error: string; fieldErrors?: Record<string, string[]> };
+
+/**
+ * A business (any signed-in person) asks to be listed. The request is a Property that is not
+ * active and not approved, so the public directory, the map, search and the agent never see it
+ * until a moderator decides. The same domain, phone or UPI id as an existing listing is refused.
+ */
+export async function requestListing(userId: string, input: PropertyInput & { documentEvidenceId?: string }): Promise<ListingRequestResult> {
+  const parsed = propertyInputSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Check the highlighted fields.", fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[]> };
+  const data = parsed.data;
+  if (!data.domain && !data.phone && !data.businessUpi) return { ok: false, error: "Give at least a website, a business phone or a business UPI id, so travellers can recognise you.", fieldErrors: { phone: ["Add a website, phone or UPI id"] } };
+
+  const dayAgo = new Date(Date.now() - 86400_000);
+  if ((await prisma.property.count({ where: { requestedById: userId, createdAt: { gte: dayAgo } } })) >= LISTING_REQUESTS_PER_DAY) {
+    return { ok: false, error: `You can send ${LISTING_REQUESTS_PER_DAY} listing requests a day. Try again tomorrow.` };
+  }
+  const idents = [
+    data.domain ? { kind: "DOMAIN" as const, value: data.domain } : null,
+    data.phone ? { kind: "PHONE" as const, value: data.phone.replace(/\D/g, "") } : null,
+    data.businessUpi ? { kind: "UPI" as const, value: data.businessUpi } : null,
+  ].filter((x): x is { kind: "DOMAIN" | "PHONE" | "UPI"; value: string } => !!x);
+  const clash = await prisma.propertyIdentifier.findFirst({
+    where: { identifier: { OR: idents.map((i) => ({ kind: i.kind, value: i.value })) }, property: { listingStatus: { in: ["APPROVED", "PENDING"] } } },
+    select: { property: { select: { name: true, listingStatus: true } } },
+  });
+  if (clash) {
+    return { ok: false, error: clash.property.listingStatus === "PENDING" ? `A listing request with the same website, phone or UPI id is already waiting for review (${clash.property.name}).` : `${clash.property.name} is already listed with the same website, phone or UPI id. If it is yours and out of date, contact us from Help.` };
+  }
+  let documentEvidenceId: string | null = null;
+  if (input.documentEvidenceId) {
+    const ev = await prisma.evidence.findFirst({ where: { id: input.documentEvidenceId, ownerId: userId, deletedAt: null }, select: { id: true } });
+    if (!ev) return { ok: false, error: "The attached document could not be found. Upload it again." };
+    documentEvidenceId = ev.id;
+  }
+  const property = await prisma.$transaction(async (tx) => {
+    const p = await tx.property.create({
+      data: { ...columns(data), slug: await uniqueSlug(tx, data.name), createdById: userId, requestedById: userId, listingStatus: "PENDING", isActive: false, documentEvidenceId },
+    });
+    await syncIdentifiers(tx, p.id, data);
+    await tx.auditLog.create({ data: { actorId: userId, action: "property.request_listing", entityType: "Property", entityId: p.id, metadata: { name: p.name } } });
+    return p;
+  });
+  return { ok: true, id: property.id };
+}
+
+/**
+ * A moderator decides a listing request: list it, list and verify it, or reject it with a reason.
+ * The requester is told either way.
+ */
+export async function decideListing(actorId: string, id: string, decision: "list" | "verify" | "reject", reason?: string) {
+  return prisma.$transaction(async (tx) => {
+    const p = await tx.property.findUniqueOrThrow({ where: { id }, select: { id: true, name: true, listingStatus: true, requestedById: true, slug: true } });
+    if (p.listingStatus !== "PENDING") throw new Error("This request was already decided.");
+    const now = new Date();
+    const updated = await tx.property.update({
+      where: { id },
+      data:
+        decision === "reject"
+          ? { listingStatus: "REJECTED", isActive: false, rejectionReason: reason?.trim().slice(0, 500) || "Not approved" }
+          : { listingStatus: "APPROVED", isActive: true, rejectionReason: null, ...(decision === "verify" ? { verified: true, verifiedAt: now, verifiedById: actorId } : {}) },
+    });
+    await record(tx, actorId, id, decision === "reject" ? "reject_listing" : decision === "verify" ? "approve_and_verify_listing" : "approve_listing", { note: reason?.slice(0, 300) });
+    if (p.requestedById) {
+      await tx.notification.create({
+        data: {
+          userId: p.requestedById,
+          type: "system",
+          title: decision === "reject" ? `Your listing request for ${p.name} was not approved` : `${p.name} is now listed${decision === "verify" ? " and verified" : ""}`,
+          body: decision === "reject" ? (reason?.slice(0, 200) ?? null) : "Travellers can now find it in the directory and on the map.",
+          href: decision === "reject" ? "/directory/request" : `/directory?property=${p.slug}`,
+          data: { propertyId: p.id, decision },
+        },
+      });
+    }
+    return updated;
+  });
+}

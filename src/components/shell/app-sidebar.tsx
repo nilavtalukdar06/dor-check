@@ -83,7 +83,8 @@ export function AppSidebar({
   /** Server-rendered, Suspense-wrapped user menu. */
   user: React.ReactNode;
   counts?: Record<string, number>;
-  usage: { used: number; limit: number };
+  /** Null while it loads. */
+  usage: { used: number; limit: number | null } | null;
   /** Async slot that renders <ModeratorNav /> only for moderators. */
   moderatorSlot?: React.ReactNode;
 }) {
@@ -101,7 +102,7 @@ export function AppSidebar({
         {moderatorSlot}
       </SidebarContent>
       <SidebarFooter className="gap-3 p-3">
-        <UsageCard used={usage.used} limit={usage.limit} />
+        <UsageCard used={usage?.used ?? null} limit={usage?.limit ?? null} />
         {user}
       </SidebarFooter>
     </Sidebar>

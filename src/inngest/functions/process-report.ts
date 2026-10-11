@@ -1,6 +1,7 @@
 import { inngest } from "../client";
 import { reportSubmitted } from "../events";
 import prisma from "@/lib/prisma";
+import { notifyUsers } from "@/server/notify";
 import { requestReportsReindex, runAutoCheck } from "@/server/reports";
 
 /**
@@ -25,21 +26,21 @@ export const processReport = inngest.createFunction(
     const check = await step.run("auto-check", () => runAutoCheck(reportId));
 
     await step.run("notify-moderators", async () => {
-      const already = await prisma.notification.count({ where: { type: "report_status", title: { startsWith: "New report" }, data: { path: ["reportId"], equals: reportId } } });
+      const already = await prisma.notification.count({ where: { type: { in: ["moderation_assigned", "report_status"] }, title: { startsWith: "New report" }, data: { path: ["reportId"], equals: reportId } } });
       if (already > 0) return { notified: 0 };
       const report = await prisma.report.findUnique({ where: { id: reportId }, select: { reporterId: true, summary: true } });
       const staff = await prisma.user.findMany({ where: { role: { in: ["MODERATOR", "ADMIN"] }, ...(report?.reporterId ? { id: { not: report.reporterId } } : {}) }, select: { id: true } });
       if (staff.length === 0) return { notified: 0 };
-      await prisma.notification.createMany({
-        data: staff.map((s) => ({
+      await notifyUsers(
+        staff.map((s) => ({
           userId: s.id,
-          type: "report_status",
+          type: "moderation_assigned",
           title: `New report ${reference} needs review`,
           body: `${report?.summary ?? ""}${check.matches ? ` · ${check.summary.replace("Auto: ", "")}` : ""}`.slice(0, 200),
           href: "/moderation",
           data: { reportId, reference },
         })),
-      });
+      );
       return { notified: staff.length };
     });
 

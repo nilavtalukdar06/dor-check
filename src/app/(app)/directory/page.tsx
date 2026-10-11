@@ -7,6 +7,7 @@ import { PropertyDetailView } from "@/components/directory/property-detail";
 import { PropertyDrawer } from "@/components/directory/property-drawer";
 import { GridSkeleton, LoadingState } from "@/components/shell/loading";
 import { PageHeader } from "@/components/shell/page-header";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { directoryHref, directoryParamsSchema } from "@/lib/directory";
 import { getPropertyDetail, listProperties } from "@/server/directory-queries";
@@ -88,7 +89,11 @@ function ResultsFallback() {
 export default function DirectoryPage({ searchParams }: PageProps<"/directory">) {
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Explore directory" description="Registered stays, taxi unions, guides and tours from the demo tourism directory." />
+      <PageHeader
+        title="Explore directory"
+        description="Registered stays, taxi unions, guides and tours from the demo tourism directory."
+        actions={<Button variant="outline" className="h-10 shadow-xs" nativeButton={false} render={<Link href="/directory/request" />}>Request a listing</Button>}
+      />
       <Suspense fallback={<ResultsFallback />}>
         <DirectoryResults searchParams={searchParams} />
       </Suspense>

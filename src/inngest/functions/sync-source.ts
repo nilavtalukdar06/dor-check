@@ -36,6 +36,9 @@ export const syncKnowledgeSource = inngest.createFunction(
     const run = await step.run("start", async () => {
       const source = await prisma.knowledgeSource.findUniqueOrThrow({ where: { id: sourceId } });
       await prisma.knowledgeSource.update({ where: { id: sourceId }, data: { status: "SYNCING", error: null } });
+      // Only one sync of a source runs at a time, so any earlier run still marked running was lost
+      // (a restart or a timeout): close it so the run list does not show it running forever.
+      await prisma.workflowRun.updateMany({ where: { knowledgeSourceId: sourceId, status: "RUNNING" }, data: { status: "FAILED", finishedAt: new Date(), error: "Stopped without finishing" } });
       const r = await prisma.workflowRun.create({
         data: {
           runCode: `run_${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
@@ -81,5 +84,23 @@ export const syncKnowledgeSource = inngest.createFunction(
       await prisma.workflowRun.update({ where: { id: run.runId }, data: { status: "COMPLETED", finishedAt: new Date(), durationMs: stats.durationMs, stepsDone: 4 } });
       return { ...stats, chunksIndexed: chunks };
     });
+  },
+);
+
+/**
+ * A sync that is cancelled or times out does not call onFailure, so it would stay "Syncing" for
+ * ever. This marks the source failed (it can be synced again) and closes the run.
+ */
+export const syncKnowledgeSourceCancelled = inngest.createFunction(
+  { id: "sync-knowledge-source-cancelled", triggers: [{ event: "inngest/function.cancelled", if: "event.data.function_id == 'dorcheck-sync-knowledge-source'" }] },
+  async ({ event, step }) => {
+    const original = (event.data as { event?: { data?: { sourceId?: string } } }).event;
+    const sourceId = original?.data?.sourceId;
+    if (!sourceId) return { skipped: true };
+    await step.run("mark-failed", async () => {
+      await failSync(sourceId, "The sync was stopped before it finished");
+      await prisma.workflowRun.updateMany({ where: { knowledgeSourceId: sourceId, status: "RUNNING" }, data: { status: "CANCELLED", finishedAt: new Date(), error: "Stopped before it finished" } });
+    });
+    return { sourceId };
   },
 );

@@ -17,6 +17,8 @@ export type SourceRow = {
   isLive: boolean;
   lastSyncedAt: Date | null;
   error: string | null;
+  /** "Syncing" for longer than any sync takes: the run was lost (a restart, a timeout). Shown as stuck, and it can be synced again. */
+  stuck: boolean;
 };
 
 export type KnowledgeOverview = {
@@ -28,7 +30,11 @@ export type KnowledgeOverview = {
 };
 
 /** What the Knowledge screen shows. Chunk counts come from our database, which mirrors what was upserted. */
+/** A sync times out after 15 minutes, so one "running" longer than that is not running. */
+export const SYNC_STUCK_MS = 15 * 60 * 1000;
+
 export async function getKnowledgeOverview(): Promise<KnowledgeOverview> {
+  const now = Date.now();
   const [sources, chunkRows] = await Promise.all([
     prisma.knowledgeSource.findMany({ orderBy: { name: "asc" } }),
     prisma.vectorRecord.findMany({
@@ -64,6 +70,7 @@ export async function getKnowledgeOverview(): Promise<KnowledgeOverview> {
       isLive: s.isLive,
       lastSyncedAt: s.lastSyncedAt,
       error: s.error,
+      stuck: s.status === "SYNCING" && now - s.updatedAt.getTime() > SYNC_STUCK_MS,
     })),
   };
 }

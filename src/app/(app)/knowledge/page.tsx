@@ -1,7 +1,9 @@
 import { DatabaseIcon } from "lucide-react";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { StatCard } from "@/components/common/stat-card";
 import { SyncButton } from "@/components/knowledge/sync-button";
+import { AddSource } from "@/components/knowledge/add-source";
 import { TestQuery } from "@/components/knowledge/test-query";
 import { LoadingState } from "@/components/shell/loading";
 import { ModeratorOnly } from "@/components/shell/moderator-only";
@@ -52,6 +54,8 @@ function updated(s: SourceRow) {
 }
 
 async function KnowledgeView() {
+  // "Stuck" depends on the current time, so this is worked out per request.
+  await connection();
   const o = await getKnowledgeOverview();
   return (
     <>
@@ -117,7 +121,7 @@ async function KnowledgeView() {
                 </tr>
               ) : null}
               {o.sources.map((s) => {
-                const st = STATUS[s.status];
+                const st = s.stuck ? { label: "Stuck", variant: "danger" as const } : STATUS[s.status];
                 return (
                   <tr
                     key={s.id}
@@ -145,6 +149,9 @@ async function KnowledgeView() {
                     </td>
                     <td className="px-3 py-3.5">
                       <Badge variant={st.variant}>{st.label}</Badge>
+                      {s.stuck ? (
+                        <span className="mt-1 block max-w-40 text-xs text-danger">The last sync stopped without finishing. Sync again.</span>
+                      ) : null}
                       {s.status === "FAILED" && s.error ? (
                         <span className="mt-1 block max-w-40 text-xs text-danger">
                           {s.error}
@@ -155,7 +162,7 @@ async function KnowledgeView() {
                       <SyncButton
                         sourceId={s.id}
                         name={s.name}
-                        syncing={s.status === "SYNCING"}
+                        syncing={s.status === "SYNCING" && !s.stuck}
                       />
                     </td>
                   </tr>
@@ -164,7 +171,10 @@ async function KnowledgeView() {
             </tbody>
           </table>
         </section>
-        <TestQuery disabled={!o.configured || o.vectors === 0} />
+        <div className="flex min-w-0 flex-col gap-4">
+          <TestQuery disabled={!o.configured || o.vectors === 0} />
+          <AddSource />
+        </div>
       </div>
     </>
   );

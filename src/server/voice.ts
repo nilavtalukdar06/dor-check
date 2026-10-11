@@ -16,6 +16,7 @@ import {
   type VoiceLanguage,
 } from "@/lib/voice";
 import { consumeRateLimit } from "@/server/rate-limit";
+import { recordVoiceSeconds } from "@/server/settings";
 import { elevenlabsConfigured, SpeechError, ttsModel, ttsPiece, type TtsOptions } from "@/server/elevenlabs";
 import { translateCodes, TranslateError, type TranslateFn } from "@/server/translate";
 import { deleteObject, putObject, storageConfigured } from "@/server/storage";
@@ -143,6 +144,8 @@ export async function speak(userId: string, req: SpeakRequest, deps: { tts?: (t:
     });
     const stored = await putObject(`voice/${userId}/${job.id}.wav`, audio, "audio/wav");
     const done = await prisma.voiceJob.update({ where: { id: job.id }, data: { status: "COMPLETED", storageKey: stored.key, audioUrl: stored.ref, mimeType: "audio/wav", sizeBytes: audio.byteLength, durationSec: Math.round(wavSeconds(audio) * 100) / 100, completedAt: new Date() } });
+    // Cached clips cost nothing, so only freshly spoken audio counts toward the month.
+    await recordVoiceSeconds(userId, done.durationSec ?? 0).catch(() => undefined);
     return { ok: true, job: toView(done, false) };
   } catch (e) {
     if (e instanceof SpeechError) {
